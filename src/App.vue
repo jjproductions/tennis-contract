@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { supabase } from './supabase';
-import { Calendar, UserCheck, RefreshCw, AlertCircle, CheckCircle } from 'lucide-vue-next';
+import { Calendar, UserCheck, RefreshCw, AlertCircle, CheckCircle, LogOut, User, ShieldCheck, LogIn } from 'lucide-vue-next';
 import PlayerIntake from './components/PlayerIntake.vue';
+import AuthModal from './components/AuthModal.vue';
+import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
 
 interface Player {
   id: string;
@@ -23,24 +25,81 @@ interface MatchSlotView {
 }
 
 const players = ref<Player[]>([]);
+const pendingPlayers = ref<any[]>([]);
 const activePlayerId = ref<string>('');
+const activePlayerName = ref<string>('');
+const userEmail = ref<string>('');
+const isAdmin = ref<boolean>(false);
+const session = ref<any>(null);
+const authModalOpen = ref<boolean>(false);
 const allSlots = ref<MatchSlotView[]>([]);
 const loading = ref<boolean>(true);
 const notification = ref<{ text: string; error?: boolean } | null>(null);
 const currentView = ref<'intake' | 'schedule'>('intake');
 
+// Resolve authenticated user identity against players table
+const resolvePlayerIdentity = async () => {
+  const { data: { session: currentSession } } = await supabase.auth.getSession();
+  session.value = currentSession;
+
+  if (currentSession?.user?.email) {
+    userEmail.value = currentSession.user.email;
+    const { data } = await supabase
+      .from('players')
+      .select('id, full_name, is_admin')
+      .ilike('email', currentSession.user.email)
+      .maybeSingle();
+
+    if (data) {
+      activePlayerId.value = data.id;
+      activePlayerName.value = data.full_name;
+      isAdmin.value = data.is_admin === true;
+    } else {
+      activePlayerId.value = '';
+      activePlayerName.value = '';
+      isAdmin.value = false;
+    }
+  } else {
+    userEmail.value = '';
+    activePlayerId.value = '';
+    activePlayerName.value = '';
+    isAdmin.value = false;
+  }
+};
+
+const handleSignOut = async () => {
+  await supabase.auth.signOut();
+  session.value = null;
+  activePlayerId.value = '';
+  activePlayerName.value = '';
+  notification.value = { text: 'Signed out successfully.' };
+};
+
 // Fetch data from Supabase
 const loadData = async () => {
   loading.value = true;
 
-  // 1. Fetch Players
+  // 1. Fetch Approved Players
   const { data: pData } = await supabase
     .from('players')
     .select('id, full_name')
     .order('full_name');
   if (pData) players.value = pData;
 
-  // 2. Fetch Match Slots with parent Match & Player details
+  // 2. Fetch Pending Player Intake Registrations for Admin Approval
+  const { data: pendingData, error: pendingErr } = await supabase
+    .from('players')
+    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, approved')
+    .eq('approved', false)
+    .order('created_at', { ascending: false });
+  
+  if (!pendingErr && pendingData) {
+    pendingPlayers.value = pendingData;
+  } else {
+    pendingPlayers.value = [];
+  }
+
+  // 3. Fetch Match Slots with parent Match & Player details
   const { data: sData } = await supabase
     .from('match_slots')
     .select(`
@@ -71,8 +130,17 @@ const loadData = async () => {
   loading.value = false;
 };
 
-onMounted(() => {
-  loadData();
+onMounted(async () => {
+  await loadData();
+  await resolvePlayerIdentity();
+
+  supabase.auth.onAuthStateChange(async (_event, newSession) => {
+    session.value = newSession;
+    await resolvePlayerIdentity();
+    if (newSession) {
+      authModalOpen.value = false;
+    }
+  });
 });
 
 // Computed views
@@ -86,6 +154,12 @@ const openSubMatches = computed(() =>
 
 // Actions
 const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') => {
+  if (!session.value || !activePlayerId.value) {
+    authModalOpen.value = true;
+    notification.value = { text: 'Please sign in to manage your sub status.', error: true };
+    return;
+  }
+
   const { error } = await supabase
     .from('match_slots')
     .update({ status })
@@ -103,8 +177,9 @@ const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') =>
 };
 
 const claimSlot = async (slotId: string) => {
-  if (!activePlayerId.value) {
-    notification.value = { text: 'Please select your name first.', error: true };
+  if (!session.value || !activePlayerId.value) {
+    authModalOpen.value = true;
+    notification.value = { text: 'Please sign in to claim sub slots.', error: true };
     return;
   }
 
@@ -128,6 +203,62 @@ const claimSlot = async (slotId: string) => {
 
 <template>
   <main class="max-w-4xl mx-auto p-4 sm:p-6 bg-slate-50 min-h-screen text-slate-900 font-sans">
+    <!-- Auth Modal -->
+    <AuthModal
+      v-if="authModalOpen"
+      @authenticated="resolvePlayerIdentity(); authModalOpen = false;"
+    />
+
+    <!-- Global Header & Identity Status -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-800">Indoor Winter Tennis Portal</h1>
+        <p class="text-sm text-slate-500">Vue 3 + Supabase Self-Service Sub & Swap Manager</p>
+      </div>
+
+      <!-- Auth Status Badge -->
+      <div v-if="session && activePlayerId" class="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+        <div class="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm">
+          <User class="w-5 h-5" />
+        </div>
+        <div>
+          <div class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            {{ activePlayerName }}
+            <ShieldCheck class="w-3.5 h-3.5 text-emerald-600" />
+            <span v-if="isAdmin" class="text-[10px] font-extrabold uppercase px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded border border-amber-300">
+              Admin
+            </span>
+          </div>
+          <div class="text-[11px] text-slate-400">{{ userEmail }}</div>
+        </div>
+        <button
+          @click="handleSignOut"
+          class="ml-2 text-xs font-medium text-slate-500 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition flex items-center gap-1"
+          title="Sign Out"
+        >
+          <LogOut class="w-4 h-4" />
+          <span class="hidden sm:inline">Sign Out</span>
+        </button>
+      </div>
+
+      <div v-else class="flex items-center gap-3">
+        <button
+          @click="authModalOpen = true"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow-sm transition flex items-center gap-2"
+        >
+          <LogIn class="w-4 h-4" />
+          Player Sign In
+        </button>
+      </div>
+    </div>
+
+    <!-- Admin Approval Panel for Pending Player Intake Submissions (Visible ONLY to Logged-In Admins) -->
+    <AdminApprovalPanel
+      v-if="session && isAdmin"
+      :pendingPlayers="pendingPlayers"
+      @updated="loadData"
+    />
+
     <!-- View Switcher -->
     <div class="flex gap-2 mb-6 border-b border-slate-200 pb-3">
       <button
@@ -151,27 +282,6 @@ const claimSlot = async (slotId: string) => {
 
     <!-- View 2: Existing Schedule & Sub Board -->
     <div v-else>
-      <!-- Header & Identity Selector -->
-      <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
-        <h1 class="text-2xl font-bold tracking-tight text-slate-800">Indoor Winter Tennis Portal</h1>
-        <p class="text-sm text-slate-500 mb-4">Vue 3 + Supabase Self-Service Sub & Swap Manager</p>
-
-        <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <label for="player-select" class="text-sm font-semibold text-slate-700">
-            Select Your Name:
-          </label>
-          <select
-            id="player-select"
-            v-model="activePlayerId"
-            class="w-full sm:w-64 border border-slate-300 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-          >
-            <option value="">-- Choose Player --</option>
-            <option v-for="p in players" :key="p.id" :value="p.id">
-              {{ p.full_name }}
-            </option>
-          </select>
-        </div>
-      </div>
 
       <!-- Notification Banner -->
       <div

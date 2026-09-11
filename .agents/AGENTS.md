@@ -7,3 +7,4 @@ The agent must:
 2. Increment the patch version sequentially (e.g. from `Beta 1.0.10` to `Beta 1.0.11`).
 3. Generate a concise commit message detailing the currently staged changes.
 4. Execute `git commit` and `git push` to the active branch automatically.
+5. DO NOT do 'git add .' -- only add the files that are staged.  If nothing is staged, stop and notify user to stage files.

@@ -63,18 +63,32 @@ const handleRegister = async () => {
     return;
   }
 
+  if (!email.value.trim()) {
+    statusMessage.value = { text: 'Please enter a valid email address (required for portal login).', error: true };
+    return;
+  }
+
   isSubmitting.value = true;
   statusMessage.value = null;
 
-  const payload = {
+  // Check if current user is logged in
+  const { data: { session } } = await supabase.auth.getSession();
+  const isSelfUpdate = session?.user?.email?.toLowerCase() === email.value.trim().toLowerCase();
+
+  const payload: any = {
     full_name: fullName.value.trim(),
-    email: email.value.trim() || null,
+    email: email.value.trim(),
     singles_share: singlesShare.value,
     doubles_share: doublesShare.value,
     blackout_weeks: selectedBlackouts.value.sort((a, b) => a - b),
   };
 
-  // Upsert on full_name so players can update their preferences if they change their mind
+  // New registrations default to pending approval
+  if (!isSelfUpdate) {
+    payload.approved = false;
+  }
+
+  // Upsert on full_name so players can update preferences
   const { error } = await supabase.from('players').upsert(payload, { onConflict: 'full_name' });
 
   isSubmitting.value = false;
@@ -82,7 +96,11 @@ const handleRegister = async () => {
   if (error) {
     statusMessage.value = { text: error.message, error: true };
   } else {
-    statusMessage.value = { text: `Preferences saved for ${fullName.value}!` };
+    if (isSelfUpdate) {
+      statusMessage.value = { text: `Preferences updated successfully for ${fullName.value}!` };
+    } else {
+      statusMessage.value = { text: `Registration submitted for ${fullName.value}! Your submission is currently pending Admin approval.` };
+    }
     fullName.value = '';
     email.value = '';
     selectedBlackouts.value = [];
@@ -159,7 +177,7 @@ const handleRegister = async () => {
             />
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">Email (Optional)</label>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Email (Required for Login) *</label>
             <input
               v-model="email"
               type="email"

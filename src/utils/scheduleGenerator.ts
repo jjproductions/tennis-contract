@@ -13,6 +13,12 @@ export interface DayCourtConfig {
   doublesCourts: number;
 }
 
+export function formatDayOfWeek(day: string): string {
+  if (!day) return '';
+  const lower = day.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 export interface GeneratedSlot {
   player_id: string;
   player_name: string;

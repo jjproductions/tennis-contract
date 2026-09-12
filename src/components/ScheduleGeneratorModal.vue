@@ -5,11 +5,12 @@ import {
   generateSeasonSchedule,
   calculateCourtsFromShares,
   getMatchDateForDay,
+  formatDayOfWeek,
   type PlayerForScheduling,
   type ScheduleGenResult,
   type DayCourtConfig,
 } from '../utils/scheduleGenerator';
-import { Calendar, Play, CheckCircle2, AlertCircle, RefreshCw, Layers, ShieldCheck, UserCheck, Sparkles, AlertTriangle } from 'lucide-vue-next';
+import { Calendar, Play, CheckCircle2, AlertCircle, RefreshCw, Layers, ShieldCheck, UserCheck, Sparkles, AlertTriangle, Pin } from 'lucide-vue-next';
 
 const props = defineProps<{
   players: PlayerForScheduling[];
@@ -19,11 +20,11 @@ const emit = defineEmits(['scheduled']);
 
 const startDate = ref<string>('2026-10-19'); // Default to Monday
 
-// Predetermined weekly schedule (Mon: 1 Doubles, Tue: 1 Singles + 1 Doubles, Wed: 1 Doubles)
+// Predetermined weekly schedule (Mon: 1 Singles, Tue: 2 Doubles, Wed: 1 Singles)
 const dailySchedule = ref<DayCourtConfig[]>([
-  { dayOfWeek: 'Monday', singlesCourts: 0, doublesCourts: 1 },
-  { dayOfWeek: 'Tuesday', singlesCourts: 1, doublesCourts: 1 },
-  { dayOfWeek: 'Wednesday', singlesCourts: 0, doublesCourts: 1 },
+  { dayOfWeek: 'Monday', singlesCourts: 1, doublesCourts: 0 },
+  { dayOfWeek: 'Tuesday', singlesCourts: 0, doublesCourts: 2 },
+  { dayOfWeek: 'Wednesday', singlesCourts: 1, doublesCourts: 0 },
 ]);
 
 const generatedResult = ref<ScheduleGenResult | null>(null);
@@ -31,6 +32,21 @@ const selectedPreviewWeek = ref<number>(1);
 
 const isPublishing = ref<boolean>(false);
 const statusMessage = ref<{ text: string; error?: boolean } | null>(null);
+
+const hoveredPlayerId = ref<string | null>(null);
+const selectedPlayerId = ref<string | null>(null);
+
+const handleSelectPlayer = (playerId: string) => {
+  if (selectedPlayerId.value === playerId) {
+    selectedPlayerId.value = null; // Toggle off stickiness
+  } else {
+    selectedPlayerId.value = playerId; // Make selection sticky
+  }
+};
+
+const activePlayerId = computed<string | null>(() => {
+  return hoveredPlayerId.value || selectedPlayerId.value;
+});
 
 // Calculated share capacity from approved player roster
 const shareCapacity = computed(() => {
@@ -47,17 +63,19 @@ const totalWeeklyCourts = computed(() => {
 
 const handleResetToPredetermined = () => {
   dailySchedule.value = [
-    { dayOfWeek: 'Monday', singlesCourts: 0, doublesCourts: 1 },
-    { dayOfWeek: 'Tuesday', singlesCourts: 1, doublesCourts: 1 },
-    { dayOfWeek: 'Wednesday', singlesCourts: 0, doublesCourts: 1 },
+    { dayOfWeek: 'Monday', singlesCourts: 1, doublesCourts: 0 },
+    { dayOfWeek: 'Tuesday', singlesCourts: 0, doublesCourts: 2 },
+    { dayOfWeek: 'Wednesday', singlesCourts: 1, doublesCourts: 0 },
   ];
   statusMessage.value = {
-    text: 'Court schedule reset to predetermined default (Mon: 1 Doubles, Tue: 1 Singles + 1 Doubles, Wed: 1 Doubles).',
+    text: 'Court schedule reset to predetermined default (Mon: 1 Singles, Tue: 2 Doubles, Wed: 1 Singles).',
   };
 };
 
 const handleGenerate = () => {
   statusMessage.value = null;
+  selectedPlayerId.value = null;
+  hoveredPlayerId.value = null;
 
   if (props.players.length === 0) {
     statusMessage.value = { text: 'No approved players available. Approve players in the intake list first.', error: true };
@@ -107,7 +125,7 @@ const handlePublish = async () => {
         .from('matches')
         .insert({
           week_number: match.week_number,
-          day_of_week: match.day_of_week,
+          day_of_week: match.day_of_week.toUpperCase(),
           match_date: match.match_date,
           type: match.type,
           court_number: match.court_number,
@@ -119,9 +137,10 @@ const handlePublish = async () => {
         throw new Error(matchError?.message || 'Failed to insert match');
       }
 
-      const slotRecords = match.slots.map((slot) => ({
+      const slotRecords = match.slots.map((slot, index) => ({
         match_id: insertedMatch.id,
         player_id: slot.player_id,
+        slot_position: index + 1,
         status: 'CONFIRMED',
       }));
 
@@ -152,6 +171,109 @@ const formattedMondayDate = computed(() => {
   const d = new Date(year, month - 1, day);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 });
+
+interface WeekMatchCount {
+  singles: number;
+  doubles: number;
+  total: number;
+}
+
+const activePlayerBlackoutWeeks = computed<Set<number>>(() => {
+  if (!activePlayerId.value) return new Set();
+  const player = props.players.find((p) => p.id === activePlayerId.value);
+  return new Set(player?.blackout_weeks || []);
+});
+
+const playerWeekBreakdownMap = computed(() => {
+  const map = new Map<string, Map<number, WeekMatchCount>>();
+  if (!generatedResult.value) return map;
+
+  for (const match of generatedResult.value.matches) {
+    for (const slot of match.slots) {
+      if (!map.has(slot.player_id)) {
+        map.set(slot.player_id, new Map());
+      }
+      const playerWeeks = map.get(slot.player_id)!;
+      if (!playerWeeks.has(match.week_number)) {
+        playerWeeks.set(match.week_number, { singles: 0, doubles: 0, total: 0 });
+      }
+      const counts = playerWeeks.get(match.week_number)!;
+      if (match.type === 'SINGLES') counts.singles++;
+      else if (match.type === 'DOUBLES') counts.doubles++;
+      counts.total++;
+    }
+  }
+  return map;
+});
+
+const activePlayerSummary = computed(() => {
+  if (!activePlayerId.value || !generatedResult.value) return null;
+  const summary = generatedResult.value.summaries.find((s) => s.player_id === activePlayerId.value);
+  if (!summary) return null;
+  const playerWeeks = playerWeekBreakdownMap.value.get(activePlayerId.value);
+  const totalWeeks = playerWeeks ? playerWeeks.size : 0;
+  const blackoutCount = activePlayerBlackoutWeeks.value.size;
+  const isPinned = selectedPlayerId.value === activePlayerId.value && !hoveredPlayerId.value;
+
+  return {
+    playerId: summary.player_id,
+    fullName: summary.full_name,
+    totalWeeks,
+    scheduledSingles: summary.scheduled_singles,
+    scheduledDoubles: summary.scheduled_doubles,
+    blackoutCount,
+    isPinned,
+  };
+});
+
+const getWeekButtonClass = (w: number) => {
+  const curId = activePlayerId.value;
+  if (curId) {
+    const isBlackout = activePlayerBlackoutWeeks.value.has(w);
+    const counts = playerWeekBreakdownMap.value.get(curId)?.get(w);
+    const isSelected = selectedPreviewWeek.value === w;
+    const baseRing = isSelected ? 'ring-4 ring-amber-400 z-10' : 'ring-2';
+
+    if (isBlackout) {
+      return `bg-slate-950 text-slate-100 font-bold shadow-md scale-105 ${baseRing} ring-slate-700`;
+    }
+
+    if (counts) {
+      if (counts.singles > 0 && counts.doubles > 0) {
+        return `bg-purple-600 text-white font-bold shadow-md scale-105 ${baseRing} ring-purple-300`;
+      } else if (counts.singles > 0) {
+        return `bg-indigo-600 text-white font-bold shadow-md scale-105 ${baseRing} ring-indigo-300`;
+      } else {
+        return `bg-emerald-600 text-white font-bold shadow-md scale-105 ${baseRing} ring-emerald-300`;
+      }
+    } else {
+      return 'bg-slate-100 text-slate-400 opacity-30 hover:opacity-80 scale-95';
+    }
+  }
+
+  if (selectedPreviewWeek.value === w) {
+    return 'bg-blue-600 text-white font-bold shadow-sm ring-1 ring-blue-600';
+  }
+  return 'bg-slate-100 text-slate-700 hover:bg-slate-200';
+};
+
+const getWeekBadgeText = (w: number) => {
+  const curId = activePlayerId.value;
+  if (!curId) return '';
+  if (activePlayerBlackoutWeeks.value.has(w)) {
+    return 'OFF';
+  }
+  const counts = playerWeekBreakdownMap.value.get(curId)?.get(w);
+  if (!counts) return '';
+  if (counts.singles > 0 && counts.doubles > 0) {
+    return `${counts.singles}S ${counts.doubles}D`;
+  } else if (counts.singles > 0) {
+    return `${counts.singles}S`;
+  } else if (counts.doubles > 0) {
+    return `${counts.doubles}D`;
+  }
+  return '';
+};
 </script>
 
 <template>
@@ -317,8 +439,31 @@ const formattedMondayDate = computed(() => {
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              <tr v-for="s in generatedResult.summaries" :key="s.player_id">
-                <td class="py-2 font-semibold text-slate-800">{{ s.full_name }}</td>
+              <tr
+                v-for="s in generatedResult.summaries"
+                :key="s.player_id"
+                @mouseenter="hoveredPlayerId = s.player_id"
+                @mouseleave="hoveredPlayerId = null"
+                @click="handleSelectPlayer(s.player_id)"
+                class="transition-all duration-150 cursor-pointer select-none"
+                :class="[
+                  selectedPlayerId === s.player_id
+                    ? 'bg-indigo-100/90 font-bold border-l-4 border-l-indigo-600 shadow-2xs'
+                    : hoveredPlayerId === s.player_id
+                    ? 'bg-indigo-50/80 font-bold'
+                    : 'hover:bg-slate-50/80'
+                ]"
+              >
+                <td class="py-2 font-semibold text-slate-800 flex items-center justify-between pr-3">
+                  <span>{{ s.full_name }}</span>
+                  <span
+                    v-if="selectedPlayerId === s.player_id"
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold flex items-center gap-1 shadow-2xs"
+                  >
+                    <Pin class="w-2.5 h-2.5 fill-white" />
+                    Pinned
+                  </span>
+                </td>
                 <td class="py-2">
                   <span :class="s.scheduled_singles === s.target_singles ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'">
                     {{ s.scheduled_singles }} / {{ s.target_singles }}
@@ -363,16 +508,46 @@ const formattedMondayDate = computed(() => {
             </div>
           </div>
 
+          <!-- Active Hover / Sticky Summary Banner -->
+          <div
+            v-if="activePlayerSummary"
+            class="p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs flex items-center justify-between font-semibold text-indigo-900 transition-all shadow-sm"
+          >
+            <span class="flex items-center gap-1.5">
+              <span
+                class="w-2 h-2 rounded-full"
+                :class="activePlayerSummary.isPinned ? 'bg-indigo-600 ring-2 ring-indigo-300' : 'bg-indigo-600 animate-pulse'"
+              ></span>
+              <span>{{ activePlayerSummary.isPinned ? 'Selected (Pinned):' : 'Highlighting:' }}</span>
+              <strong class="text-indigo-950">{{ activePlayerSummary.fullName }}</strong>
+            </span>
+            <span class="text-[11px] bg-white px-2.5 py-0.5 rounded-md border border-indigo-200 text-slate-700 shadow-2xs">
+              Scheduled in {{ activePlayerSummary.totalWeeks }} Weeks (
+              <span class="text-indigo-600 font-bold">{{ activePlayerSummary.scheduledSingles }} Singles</span>, 
+              <span class="text-emerald-600 font-bold">{{ activePlayerSummary.scheduledDoubles }} Doubles</span>
+              )
+              <span v-if="activePlayerSummary.blackoutCount > 0" class="font-bold text-slate-900 ml-1">
+                • {{ activePlayerSummary.blackoutCount }} Blackout (OFF)
+              </span>
+            </span>
+          </div>
+
           <!-- 2-Row Week Selector (12 columns per row) -->
-          <div class="grid grid-cols-6 sm:grid-cols-12 gap-1 w-full pt-1">
+          <div class="grid grid-cols-6 sm:grid-cols-12 gap-1.5 w-full pt-1">
             <button
               v-for="w in 24"
               :key="w"
               @click="selectedPreviewWeek = w"
-              :class="selectedPreviewWeek === w ? 'bg-blue-600 text-white font-bold shadow-sm ring-1 ring-blue-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-              class="text-[11px] py-1 rounded transition text-center font-medium"
+              :class="getWeekButtonClass(w)"
+              class="text-[11px] py-1.5 rounded-lg transition-all duration-150 text-center font-medium flex flex-col items-center justify-center relative min-h-[40px]"
             >
-              W{{ w }}
+              <span class="leading-none">W{{ w }}</span>
+              <span
+                v-if="activePlayerId && getWeekBadgeText(w)"
+                class="text-[9px] font-extrabold mt-0.5 px-1 py-0.2 rounded leading-none bg-white/20 text-white border border-white/30"
+              >
+                {{ getWeekBadgeText(w) }}
+              </span>
             </button>
           </div>
         </div>
@@ -388,7 +563,7 @@ const formattedMondayDate = computed(() => {
               <div class="flex justify-between items-center mb-2">
                 <div>
                   <span class="font-bold text-xs text-slate-800">
-                    {{ m.day_of_week }} • Court #{{ m.court_number }}
+                    {{ formatDayOfWeek(m.day_of_week) }} • Court #{{ m.court_number }}
                   </span>
                   <p class="text-[10px] text-slate-500">{{ m.match_date }}</p>
                 </div>

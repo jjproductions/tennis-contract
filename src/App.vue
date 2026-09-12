@@ -5,6 +5,7 @@ import { Calendar, UserCheck, RefreshCw, AlertCircle, CheckCircle, LogOut, User,
 import PlayerIntake from './components/PlayerIntake.vue';
 import AuthModal from './components/AuthModal.vue';
 import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
+import { formatDayOfWeek } from './utils/scheduleGenerator';
 
 interface Player {
   id: string;
@@ -334,7 +335,7 @@ const claimSlot = async (slotId: string) => {
             <div>
               <div class="flex justify-between items-start mb-1">
                 <span class="font-semibold text-slate-800">
-                  Week {{ slot.week_number }} ({{ slot.day_of_week }})
+                  Week {{ slot.week_number }} ({{ formatDayOfWeek(slot.day_of_week) }})
                 </span>
                 <span class="text-xs px-2 py-0.5 rounded font-medium bg-amber-200 text-amber-800">
                   {{ slot.type }}
@@ -387,7 +388,7 @@ const claimSlot = async (slotId: string) => {
             <div>
               <div class="flex items-center gap-2">
                 <span class="font-bold text-sm text-slate-800">Week {{ slot.week_number }}</span>
-                <span class="text-xs text-slate-500">({{ slot.day_of_week }}, {{ slot.match_date }})</span>
+                <span class="text-xs text-slate-500">({{ formatDayOfWeek(slot.day_of_week) }}, {{ slot.match_date }})</span>
                 <span
                   class="text-[10px] px-1.5 py-0.5 rounded font-bold"
                   :class="slot.type === 'SINGLES' ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'"
@@ -438,7 +439,7 @@ const claimSlot = async (slotId: string) => {
             <tbody class="divide-y divide-slate-100">
               <tr v-for="s in allSlots.slice(0, 30)" :key="s.slot_id" class="hover:bg-slate-50">
                 <td class="p-2 font-medium">{{ s.week_number }}</td>
-                <td class="p-2">{{ s.day_of_week }}</td>
+                <td class="p-2">{{ formatDayOfWeek(s.day_of_week) }}</td>
                 <td class="p-2">{{ s.type }}</td>
                 <td class="p-2">Ct {{ s.court_number }}</td>
                 <td class="p-2 font-medium">{{ s.player_name }}</td>

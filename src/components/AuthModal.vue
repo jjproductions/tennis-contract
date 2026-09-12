@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { supabase } from '../supabase';
-import { Mail, Lock, KeyRound, ShieldCheck, AlertCircle, CheckCircle2, Sparkles, ArrowRight, LogIn } from 'lucide-vue-next';
+import { Mail, Lock, KeyRound, ShieldCheck, AlertCircle, CheckCircle2, Sparkles, ArrowRight, X, Eye, EyeOff } from 'lucide-vue-next';
 
-const emit = defineEmits(['authenticated']);
+const emit = defineEmits(['authenticated', 'close']);
 
 const activeTab = ref<'magic-link' | 'password'>('magic-link');
 const email = ref('');
 const password = ref('');
+const confirmPassword = ref('');
+const showPassword = ref(false);
 const otpCode = ref('');
 const isOtpSent = ref(false);
+const showCodeInput = ref(false);
 const isSignUp = ref(false);
 
 const loading = ref(false);
@@ -72,10 +75,14 @@ const handleSendOtp = async () => {
   loading.value = false;
 
   if (error) {
-    errorMsg.value = error.message;
+    if (error.message.toLowerCase().includes('rate limit')) {
+      errorMsg.value = 'Email rate limit reached (Supabase test email quota limit: 3 per hour). Please switch to the "Password" tab above to sign in, or wait a few minutes before requesting another Magic Link.';
+    } else {
+      errorMsg.value = error.message;
+    }
   } else {
     isOtpSent.value = true;
-    successMsg.value = `Login code sent! Check your inbox (${email.value}) for a 6-digit passcode or magic link.`;
+    successMsg.value = `Magic Link & 6-Digit Passcode sent to ${email.value}! If clicking the magic link in your email, you may close this window. Or enter your 6-digit code below:`;
   }
 };
 
@@ -114,6 +121,22 @@ const handlePasswordAuth = async () => {
   if (!email.value.trim() || !password.value.trim()) {
     errorMsg.value = 'Please enter both email and password.';
     return;
+  }
+
+  // Confirmation check when creating a new password
+  if (isSignUp.value) {
+    if (!confirmPassword.value.trim()) {
+      errorMsg.value = 'Please confirm your password.';
+      return;
+    }
+    if (password.value !== confirmPassword.value) {
+      errorMsg.value = 'Passwords do not match. Please re-enter your password.';
+      return;
+    }
+    if (password.value.length < 6) {
+      errorMsg.value = 'Password must be at least 6 characters long.';
+      return;
+    }
   }
 
   loading.value = true;
@@ -166,10 +189,19 @@ const handlePasswordAuth = async () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden">
+  <div @click.self="emit('close')" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden relative">
+      <!-- Close Button -->
+      <button
+        @click="emit('close')"
+        class="absolute top-4 right-4 p-1.5 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition z-10"
+        title="Close modal"
+      >
+        <X class="w-5 h-5" />
+      </button>
+
       <!-- Header -->
-      <div class="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 text-white text-center">
+      <div class="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 text-white text-center relative">
         <div class="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-3 backdrop-blur-md">
           <ShieldCheck class="w-7 h-7 text-white" />
         </div>
@@ -250,10 +282,29 @@ const handlePasswordAuth = async () => {
             </button>
           </div>
 
-          <!-- OTP Code Verification Form -->
-          <div v-else class="space-y-3">
+          <!-- Magic Link Sent Screen -->
+          <div v-else class="space-y-4 text-center py-2">
+            <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+              <Mail class="w-6 h-6" />
+            </div>
             <div>
-              <label class="block text-xs font-medium text-slate-700 mb-1">Enter 6-Digit Email Code</label>
+              <h4 class="text-base font-bold text-slate-800">Check Your Email Inbox</h4>
+              <p class="text-xs text-slate-600 mt-1">
+                We sent a magic link to <span class="font-semibold text-slate-800">{{ email }}</span>.
+              </p>
+              <div class="text-xs text-slate-600 mt-3 bg-emerald-50/80 p-3 rounded-xl border border-emerald-200 text-left space-y-1">
+                <p class="font-semibold text-emerald-900">How to log in:</p>
+                <ol class="list-decimal list-inside space-y-1 text-[11px] text-emerald-800">
+                  <li>Open the email from <strong>Supabase / Winter Tennis</strong>.</li>
+                  <li>Click the <strong>"Log In"</strong> link inside the email.</li>
+                  <li>You will be logged in automatically! You can close this window now.</li>
+                </ol>
+              </div>
+            </div>
+
+            <!-- Optional 6-digit code input -->
+            <div v-if="showCodeInput" class="space-y-3 pt-2 text-left border-t border-slate-100">
+              <label class="block text-xs font-medium text-slate-700">Enter 6-Digit Email Code</label>
               <input
                 v-model="otpCode"
                 type="text"
@@ -262,26 +313,30 @@ const handlePasswordAuth = async () => {
                 @keyup.enter="handleVerifyOtp"
                 class="w-full text-center tracking-widest font-mono text-lg py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
               />
+              <button
+                @click="handleVerifyOtp"
+                :disabled="loading"
+                class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg transition"
+              >
+                Verify Passcode
+              </button>
             </div>
 
-            <button
-              @click="handleVerifyOtp"
-              :disabled="loading"
-              class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <span v-if="loading">Verifying code...</span>
-              <span v-else class="flex items-center gap-2">
-                <LogIn class="w-4 h-4" />
-                Verify & Sign In
-              </span>
-            </button>
-
-            <button
-              @click="isOtpSent = false; otpCode = '';"
-              class="w-full py-1 text-xs text-slate-500 hover:text-slate-700"
-            >
-              ← Back / Try different email
-            </button>
+            <div class="flex flex-col gap-2 pt-1">
+              <button
+                v-if="!showCodeInput"
+                @click="showCodeInput = true"
+                class="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Received a 6-digit passcode instead? Enter code
+              </button>
+              <button
+                @click="isOtpSent = false; showCodeInput = false; otpCode = '';"
+                class="text-xs text-slate-400 hover:text-slate-600"
+              >
+                ← Back / Re-enter email
+              </button>
+            </div>
           </div>
         </div>
 
@@ -306,10 +361,34 @@ const handlePasswordAuth = async () => {
               <Lock class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <input
                 v-model="password"
-                type="password"
+                :type="showPassword ? 'text' : 'password'"
                 placeholder="••••••••"
                 @keyup.enter="handlePasswordAuth"
-                class="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                class="w-full pl-9 pr-10 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              <button
+                type="button"
+                @click="showPassword = !showPassword"
+                class="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 transition"
+                :title="showPassword ? 'Hide password' : 'Show password'"
+              >
+                <EyeOff v-if="showPassword" class="w-4 h-4" />
+                <Eye v-else class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <!-- Confirm Password (shown when creating a new password) -->
+          <div v-if="isSignUp">
+            <label class="block text-xs font-medium text-slate-700 mb-1">Confirm Password</label>
+            <div class="relative">
+              <Lock class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                v-model="confirmPassword"
+                :type="showPassword ? 'text' : 'password'"
+                placeholder="••••••••"
+                @keyup.enter="handlePasswordAuth"
+                class="w-full pl-9 pr-10 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
           </div>

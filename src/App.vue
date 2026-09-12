@@ -35,7 +35,7 @@ const authModalOpen = ref<boolean>(false);
 const allSlots = ref<MatchSlotView[]>([]);
 const loading = ref<boolean>(true);
 const notification = ref<{ text: string; error?: boolean } | null>(null);
-const currentView = ref<'intake' | 'schedule'>('intake');
+const currentView = ref<'intake' | 'schedule' | 'admin'>('intake');
 
 // Resolve authenticated user identity against players table
 const resolvePlayerIdentity = async () => {
@@ -65,6 +65,10 @@ const resolvePlayerIdentity = async () => {
     activePlayerName.value = '';
     isAdmin.value = false;
   }
+
+  if (!isAdmin.value && currentView.value === 'admin') {
+    currentView.value = 'intake';
+  }
 };
 
 const handleSignOut = async () => {
@@ -72,6 +76,10 @@ const handleSignOut = async () => {
   session.value = null;
   activePlayerId.value = '';
   activePlayerName.value = '';
+  isAdmin.value = false;
+  if (currentView.value === 'admin') {
+    currentView.value = 'intake';
+  }
   notification.value = { text: 'Signed out successfully.' };
 };
 
@@ -207,6 +215,7 @@ const claimSlot = async (slotId: string) => {
     <AuthModal
       v-if="authModalOpen"
       @authenticated="resolvePlayerIdentity(); authModalOpen = false;"
+      @close="authModalOpen = false"
     />
 
     <!-- Global Header & Identity Status -->
@@ -252,13 +261,6 @@ const claimSlot = async (slotId: string) => {
       </div>
     </div>
 
-    <!-- Admin Approval Panel for Pending Player Intake Submissions (Visible ONLY to Logged-In Admins) -->
-    <AdminApprovalPanel
-      v-if="session && isAdmin"
-      :pendingPlayers="pendingPlayers"
-      @updated="loadData"
-    />
-
     <!-- View Switcher -->
     <div class="flex gap-2 mb-6 border-b border-slate-200 pb-3">
       <button
@@ -275,13 +277,28 @@ const claimSlot = async (slotId: string) => {
       >
         2. Match Schedule & Sub Board
       </button>
+      <button
+        v-if="session && isAdmin"
+        @click="currentView = 'admin'"
+        :class="currentView === 'admin' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
+        class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition flex items-center gap-2"
+      >
+        <span>3. Admin Control Panel</span>
+        <span
+          v-if="pendingPlayers.length > 0"
+          class="px-1.5 py-0.5 text-[10px] font-bold rounded-full"
+          :class="currentView === 'admin' ? 'bg-amber-400 text-slate-900' : 'bg-amber-500 text-white'"
+        >
+          {{ pendingPlayers.length }}
+        </span>
+      </button>
     </div>
 
     <!-- View 1: Intake -->
     <PlayerIntake v-if="currentView === 'intake'" @registered="loadData" />
 
     <!-- View 2: Existing Schedule & Sub Board -->
-    <div v-else>
+    <div v-else-if="currentView === 'schedule'">
 
       <!-- Notification Banner -->
       <div
@@ -439,5 +456,12 @@ const claimSlot = async (slotId: string) => {
         </div>
       </section>
     </div>
+
+    <!-- View 3: Admin Control Panel -->
+    <AdminApprovalPanel
+      v-else-if="currentView === 'admin' && session && isAdmin"
+      :pendingPlayers="pendingPlayers"
+      @updated="loadData"
+    />
   </main>
 </template>

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { supabase } from './supabase';
-import { Calendar, UserCheck, RefreshCw, AlertCircle, CheckCircle, LogOut, User, ShieldCheck, LogIn } from 'lucide-vue-next';
+import { AlertCircle, CheckCircle2, LogOut, User, ShieldCheck, LogIn, X } from 'lucide-vue-next';
 import PlayerIntake from './components/PlayerIntake.vue';
 import AuthModal from './components/AuthModal.vue';
 import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
-import { formatDayOfWeek } from './utils/scheduleGenerator';
+import MatchScheduleView from './components/MatchScheduleView.vue';
 
 interface Player {
   id: string;
@@ -25,6 +25,13 @@ interface MatchSlotView {
   player_name: string;
 }
 
+interface NotificationState {
+  text: string;
+  title?: string;
+  steps?: string[];
+  error?: boolean;
+}
+
 const players = ref<Player[]>([]);
 const pendingPlayers = ref<any[]>([]);
 const activePlayerId = ref<string>('');
@@ -33,9 +40,10 @@ const userEmail = ref<string>('');
 const isAdmin = ref<boolean>(false);
 const session = ref<any>(null);
 const authModalOpen = ref<boolean>(false);
+const authModalMode = ref<'normal' | 'recovery'>('normal');
 const allSlots = ref<MatchSlotView[]>([]);
 const loading = ref<boolean>(true);
-const notification = ref<{ text: string; error?: boolean } | null>(null);
+const notification = ref<NotificationState | null>(null);
 const currentView = ref<'intake' | 'schedule' | 'admin'>('intake');
 
 // Resolve authenticated user identity against players table
@@ -84,6 +92,39 @@ const handleSignOut = async () => {
   notification.value = { text: 'Signed out successfully.' };
 };
 
+const handleAuthenticated = async (details?: { type?: string; name?: string; email?: string }) => {
+  await resolvePlayerIdentity();
+  authModalOpen.value = false;
+  authModalMode.value = 'normal';
+  currentView.value = 'schedule';
+
+  const displayName = activePlayerName.value || details?.name || userEmail.value || 'Player';
+
+  if (details?.type === 'password_created') {
+    notification.value = {
+      title: '🔑 Password Set & Logged In Successfully!',
+      text: `Welcome ${displayName}! Your password has been set and your session is active.`,
+      steps: [
+        'View your scheduled matches below in the Match Schedule tab.',
+        'If you cannot play a match, click "Sub Out" on your match slot to list it on the sub board.',
+        'Browse open sub positions from other players and click "Claim Sub Slot" to play extra matches.'
+      ],
+      error: false
+    };
+  } else {
+    notification.value = {
+      title: '🎾 Signed In Successfully!',
+      text: `Welcome back, ${displayName}! You are signed in to the Winter Tennis Portal.`,
+      steps: [
+        'Check your upcoming scheduled matches in the list below.',
+        'Use "Sub Out" if you cannot attend a scheduled match.',
+        'Browse open sub positions to fill in for other players.'
+      ],
+      error: false
+    };
+  }
+};
+
 // Fetch data from Supabase
 const loadData = async () => {
   loading.value = true;
@@ -115,23 +156,25 @@ const loadData = async () => {
       id,
       status,
       player_id,
-      players ( full_name ),
+      players!match_slots_player_id_fkey ( full_name ),
       matches ( id, week_number, day_of_week, match_date, type, court_number )
     `);
 
   if (sData) {
-    const flattened: MatchSlotView[] = sData.map((item: any) => ({
-      slot_id: item.id,
-      match_id: item.matches.id,
-      week_number: item.matches.week_number,
-      day_of_week: item.matches.day_of_week,
-      match_date: item.matches.match_date,
-      type: item.matches.type,
-      court_number: item.matches.court_number,
-      status: item.status,
-      player_id: item.player_id,
-      player_name: item.players?.full_name ?? 'Vacant',
-    }));
+    const flattened: MatchSlotView[] = sData
+      .filter((item: any) => item.matches != null)
+      .map((item: any) => ({
+        slot_id: item.id,
+        match_id: item.matches.id,
+        week_number: item.matches.week_number,
+        day_of_week: item.matches.day_of_week,
+        match_date: item.matches.match_date,
+        type: item.matches.type,
+        court_number: item.matches.court_number,
+        status: item.status,
+        player_id: item.player_id,
+        player_name: item.players?.full_name ?? 'Vacant',
+      }));
 
     flattened.sort((a, b) => a.week_number - b.week_number);
     allSlots.value = flattened;
@@ -143,23 +186,24 @@ onMounted(async () => {
   await loadData();
   await resolvePlayerIdentity();
 
-  supabase.auth.onAuthStateChange(async (_event, newSession) => {
+  if (window.location.hash.includes('type=recovery')) {
+    authModalMode.value = 'recovery';
+    authModalOpen.value = true;
+  }
+
+  supabase.auth.onAuthStateChange(async (event, newSession) => {
     session.value = newSession;
     await resolvePlayerIdentity();
-    if (newSession) {
-      authModalOpen.value = false;
+
+    if (event === 'PASSWORD_RECOVERY') {
+      authModalMode.value = 'recovery';
+      authModalOpen.value = true;
+    } else if (newSession && authModalOpen.value && authModalMode.value !== 'recovery') {
+      handleAuthenticated({ type: 'signed_in' });
     }
   });
 });
 
-// Computed views
-const myMatches = computed(() =>
-  allSlots.value.filter((s) => s.player_id === activePlayerId.value)
-);
-
-const openSubMatches = computed(() =>
-  allSlots.value.filter((s) => s.status === 'OPEN_SUB')
-);
 
 // Actions
 const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') => {
@@ -215,8 +259,9 @@ const claimSlot = async (slotId: string) => {
     <!-- Auth Modal -->
     <AuthModal
       v-if="authModalOpen"
-      @authenticated="resolvePlayerIdentity(); authModalOpen = false;"
-      @close="authModalOpen = false"
+      :mode="authModalMode"
+      @authenticated="handleAuthenticated"
+      @close="authModalOpen = false; authModalMode = 'normal';"
     />
 
     <!-- Global Header & Identity Status -->
@@ -253,7 +298,7 @@ const claimSlot = async (slotId: string) => {
 
       <div v-else class="flex items-center gap-3">
         <button
-          @click="authModalOpen = true"
+          @click="authModalOpen = true; authModalMode = 'normal';"
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow-sm transition flex items-center gap-2"
         >
           <LogIn class="w-4 h-4" />
@@ -295,168 +340,59 @@ const claimSlot = async (slotId: string) => {
       </button>
     </div>
 
+    <!-- Global Instructions / Notification Banner -->
+    <div
+      v-if="notification"
+      class="p-4 mb-6 rounded-xl border transition-all relative shadow-sm"
+      :class="notification.error ? 'bg-red-50 text-red-800 border-red-200' : 'bg-emerald-50 text-emerald-900 border-emerald-200'"
+    >
+      <button
+        @click="notification = null"
+        class="absolute top-3 right-3 p-1 rounded-lg hover:bg-black/10 text-slate-500 hover:text-slate-700 transition"
+        title="Dismiss message"
+      >
+        <X class="w-4 h-4" />
+      </button>
+
+      <div class="flex items-start gap-3 pr-6">
+        <div class="p-2 rounded-lg mt-0.5 flex-shrink-0" :class="notification.error ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'">
+          <AlertCircle v-if="notification.error" class="w-5 h-5" />
+          <CheckCircle2 v-else class="w-5 h-5" />
+        </div>
+        <div class="space-y-1 text-sm">
+          <h4 v-if="notification.title" class="font-bold text-base tracking-tight">
+            {{ notification.title }}
+          </h4>
+          <p class="text-xs sm:text-sm font-medium leading-relaxed">
+            {{ notification.text }}
+          </p>
+          <div v-if="notification.steps && notification.steps.length > 0" class="mt-3 pt-2 border-t border-emerald-200/60 space-y-1.5 text-xs">
+            <p class="font-bold uppercase tracking-wider text-[10px] text-emerald-800">What to do next:</p>
+            <ul class="space-y-1">
+              <li v-for="(step, idx) in notification.steps" :key="idx" class="flex items-start gap-2 text-emerald-900">
+                <span class="font-bold text-emerald-700 select-none">•</span>
+                <span>{{ step }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- View 1: Intake -->
     <PlayerIntake v-if="currentView === 'intake'" @registered="loadData" />
 
-    <!-- View 2: Existing Schedule & Sub Board -->
-    <div v-else-if="currentView === 'schedule'">
-
-      <!-- Notification Banner -->
-      <div
-        v-if="notification"
-        class="p-4 mb-6 rounded-lg flex items-center gap-2 text-sm transition-all"
-        :class="notification.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'"
-      >
-        <AlertCircle v-if="notification.error" class="w-5 h-5 flex-shrink-0" />
-        <CheckCircle v-else class="w-5 h-5 flex-shrink-0" />
-        <span>{{ notification.text }}</span>
-      </div>
-
-      <!-- Open Sub Opportunities -->
-      <section class="mb-8">
-        <h2 class="text-lg font-bold flex items-center gap-2 text-amber-900 mb-3">
-          <RefreshCw class="w-5 h-5 text-amber-600" />
-          Open Sub Opportunities ({{ openSubMatches.length }})
-        </h2>
-
-        <div
-          v-if="openSubMatches.length === 0"
-          class="p-4 bg-white border border-dashed border-slate-300 rounded-lg text-sm text-slate-500 text-center"
-        >
-          No open sub slots available right now.
-        </div>
-
-        <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div
-            v-for="slot in openSubMatches"
-            :key="slot.slot_id"
-            class="bg-amber-50/70 border border-amber-200 p-4 rounded-lg flex flex-col justify-between"
-          >
-            <div>
-              <div class="flex justify-between items-start mb-1">
-                <span class="font-semibold text-slate-800">
-                  Week {{ slot.week_number }} ({{ formatDayOfWeek(slot.day_of_week) }})
-                </span>
-                <span class="text-xs px-2 py-0.5 rounded font-medium bg-amber-200 text-amber-800">
-                  {{ slot.type }}
-                </span>
-              </div>
-              <p class="text-xs text-slate-600 mb-2">
-                {{ slot.match_date }} • Court #{{ slot.court_number }}
-              </p>
-              <p class="text-xs text-slate-500">
-                Offered by: <span class="font-medium text-slate-700">{{ slot.player_name }}</span>
-              </p>
-            </div>
-
-            <div class="mt-4">
-              <button
-                v-if="slot.player_id === activePlayerId"
-                @click="setSubStatus(slot.slot_id, 'CONFIRMED')"
-                class="w-full text-xs font-semibold py-2 px-3 bg-slate-200 hover:bg-slate-300 rounded text-slate-700 transition"
-              >
-                Cancel Listing (Reclaim)
-              </button>
-              <button
-                v-else
-                @click="claimSlot(slot.slot_id)"
-                class="w-full text-xs font-semibold py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded transition shadow-sm"
-              >
-                Claim This Spot
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Active Player Schedule -->
-      <section v-if="activePlayerId" class="mb-8">
-        <h2 class="text-lg font-bold flex items-center gap-2 mb-3 text-slate-800">
-          <UserCheck class="w-5 h-5 text-blue-600" />
-          Your Scheduled Matches ({{ myMatches.length }})
-        </h2>
-
-        <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 overflow-hidden shadow-sm">
-          <div v-if="myMatches.length === 0" class="p-4 text-sm text-slate-500 text-center">
-            No matches found for this player.
-          </div>
-          <div
-            v-for="slot in myMatches"
-            :key="slot.slot_id"
-            class="p-4 flex items-center justify-between hover:bg-slate-50"
-          >
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="font-bold text-sm text-slate-800">Week {{ slot.week_number }}</span>
-                <span class="text-xs text-slate-500">({{ formatDayOfWeek(slot.day_of_week) }}, {{ slot.match_date }})</span>
-                <span
-                  class="text-[10px] px-1.5 py-0.5 rounded font-bold"
-                  :class="slot.type === 'SINGLES' ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'"
-                >
-                  {{ slot.type }}
-                </span>
-              </div>
-              <p class="text-xs text-slate-500 mt-0.5">Court #{{ slot.court_number }}</p>
-            </div>
-
-            <div>
-              <span
-                v-if="slot.status === 'OPEN_SUB'"
-                class="text-xs text-amber-700 font-semibold bg-amber-100 px-2 py-1 rounded"
-              >
-                Sub Requested
-              </span>
-              <button
-                v-else
-                @click="setSubStatus(slot.slot_id, 'OPEN_SUB')"
-                class="text-xs font-medium border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded transition"
-              >
-                Can't Make It
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Master Grid (Read-Only) -->
-      <section>
-        <h2 class="text-lg font-bold flex items-center gap-2 mb-3 text-slate-800">
-          <Calendar class="w-5 h-5 text-slate-600" />
-          Full League Master Grid
-        </h2>
-        <div class="bg-white border border-slate-200 rounded-lg p-4 overflow-x-auto shadow-sm">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr class="border-b border-slate-200 text-slate-500">
-                <th class="p-2">Wk</th>
-                <th class="p-2">Day</th>
-                <th class="p-2">Type</th>
-                <th class="p-2">Court</th>
-                <th class="p-2">Player</th>
-                <th class="p-2">Status</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr v-for="s in allSlots.slice(0, 30)" :key="s.slot_id" class="hover:bg-slate-50">
-                <td class="p-2 font-medium">{{ s.week_number }}</td>
-                <td class="p-2">{{ formatDayOfWeek(s.day_of_week) }}</td>
-                <td class="p-2">{{ s.type }}</td>
-                <td class="p-2">Ct {{ s.court_number }}</td>
-                <td class="p-2 font-medium">{{ s.player_name }}</td>
-                <td class="p-2">
-                  <span
-                    class="px-1.5 py-0.5 rounded text-[10px] font-bold"
-                    :class="s.status === 'CONFIRMED' ? 'bg-slate-100 text-slate-600' : 'bg-amber-100 text-amber-700'"
-                  >
-                    {{ s.status }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+    <!-- View 2: Schedule & Sub Board -->
+    <MatchScheduleView
+      v-else-if="currentView === 'schedule'"
+      :all-slots="allSlots"
+      :active-player-id="activePlayerId"
+      :active-player-name="activePlayerName"
+      :session="session"
+      @set-sub-status="setSubStatus"
+      @claim-slot="claimSlot"
+      @open-auth-modal="authModalOpen = true; authModalMode = 'normal';"
+    />
 
     <!-- View 3: Admin Control Panel -->
     <AdminApprovalPanel

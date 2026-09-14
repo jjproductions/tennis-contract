@@ -86,7 +86,7 @@ const handleSendOtp = async () => {
 
   if (error) {
     if (error.message.toLowerCase().includes('rate limit')) {
-      errorMsg.value = 'Email rate limit reached (Supabase test email quota limit: 3 per hour). Please switch to the "Password" tab above to sign in, or wait a few minutes before requesting another Magic Link.';
+      errorMsg.value = 'Email sending limit reached. If you have not configured Resend Custom SMTP in Supabase yet, please switch to the "Password" tab to log in, or wait a few minutes.';
     } else {
       errorMsg.value = error.message;
     }

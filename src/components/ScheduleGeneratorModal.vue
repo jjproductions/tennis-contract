@@ -6,11 +6,13 @@ import {
   calculateCourtsFromShares,
   getMatchDateForDay,
   formatDayOfWeek,
+  MAX_COURTS,
   type PlayerForScheduling,
   type ScheduleGenResult,
   type DayCourtConfig,
 } from '../utils/scheduleGenerator';
 import { Calendar, Play, CheckCircle2, AlertCircle, RefreshCw, Layers, ShieldCheck, UserCheck, Sparkles, AlertTriangle, Pin } from 'lucide-vue-next';
+import { notifySchedulePublished } from '../utils/discordNotifier';
 
 const props = defineProps<{
   players: PlayerForScheduling[];
@@ -82,9 +84,9 @@ const handleGenerate = () => {
     return;
   }
 
-  if (totalWeeklyCourts.value > 4) {
+  if (totalWeeklyCourts.value > MAX_COURTS) {
     statusMessage.value = {
-      text: `Cannot generate schedule: You have configured ${totalWeeklyCourts.value} courts per week. Maximum allowed is 4 courts per week.`,
+      text: `Cannot generate schedule: You have configured ${totalWeeklyCourts.value} courts per week. Maximum allowed is ${MAX_COURTS} courts per week.`,
       error: true,
     };
     return;
@@ -102,6 +104,7 @@ const handleGenerate = () => {
   });
 
   generatedResult.value = result;
+  selectedPreviewWeek.value = 1;
 };
 
 const handlePublish = async () => {
@@ -120,6 +123,7 @@ const handlePublish = async () => {
     await supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
     // 2. Insert generated matches and slots
+    let totalSlotsCount = 0;
     for (const match of generatedResult.value.matches) {
       const { data: insertedMatch, error: matchError } = await supabase
         .from('matches')
@@ -144,6 +148,8 @@ const handlePublish = async () => {
         status: 'CONFIRMED',
       }));
 
+      totalSlotsCount += slotRecords.length;
+
       const { error: slotError } = await supabase.from('match_slots').insert(slotRecords);
       if (slotError) {
         throw new Error(slotError.message);
@@ -152,6 +158,15 @@ const handlePublish = async () => {
 
     statusMessage.value = { text: '24-Week Schedule successfully generated and published to Supabase!' };
     isPublishing.value = false;
+
+    // Trigger Discord notification for published schedule
+    notifySchedulePublished({
+      numWeeks: 24,
+      totalMatches: generatedResult.value.matches.length,
+      totalSlots: totalSlotsCount,
+      startDate: startDate.value,
+    });
+
     emit('scheduled');
   } catch (err: any) {
     isPublishing.value = false;
@@ -287,7 +302,7 @@ const getWeekBadgeText = (w: number) => {
             Season Schedule & Court Configuration
           </h3>
           <p class="text-xs text-slate-500 mt-0.5">
-            Predetermined court allocation (Monday – Wednesday, 4 Courts Total per week).
+            Predetermined court allocation (Monday – Wednesday, {{ MAX_COURTS }} Courts Total per week).
           </p>
         </div>
 
@@ -317,9 +332,9 @@ const getWeekBadgeText = (w: number) => {
           <div class="flex justify-between items-center text-xs font-semibold text-slate-700">
             <span>Approved Roster Demand:</span>
             <span
-              :class="totalWeeklyCourts <= 4 ? 'text-emerald-700' : 'text-rose-600 font-bold'"
+              :class="totalWeeklyCourts <= MAX_COURTS ? 'text-emerald-700' : 'text-rose-600 font-bold'"
             >
-              Configured: {{ totalWeeklyCourts }} / 4 Courts Max / Wk
+              Configured: {{ totalWeeklyCourts }} / {{ MAX_COURTS }} Courts Max / Wk
             </span>
           </div>
           <p class="text-[11px] text-slate-500">
@@ -336,7 +351,7 @@ const getWeekBadgeText = (w: number) => {
           <span
             class="text-[11px] font-bold px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-800"
           >
-            {{ totalWeeklyCourts }} / 4 Courts Total
+            {{ totalWeeklyCourts }} / {{ MAX_COURTS }} Courts Total
           </span>
         </div>
 
@@ -357,7 +372,7 @@ const getWeekBadgeText = (w: number) => {
                   v-model.number="day.singlesCourts"
                   type="number"
                   min="0"
-                  max="4"
+                  :max="MAX_COURTS"
                   class="w-full text-center border rounded p-1 text-xs font-semibold bg-white"
                 />
               </div>
@@ -368,7 +383,7 @@ const getWeekBadgeText = (w: number) => {
                   v-model.number="day.doublesCourts"
                   type="number"
                   min="0"
-                  max="4"
+                  :max="MAX_COURTS"
                   class="w-full text-center border rounded p-1 text-xs font-semibold bg-white"
                 />
               </div>
@@ -381,14 +396,14 @@ const getWeekBadgeText = (w: number) => {
         </div>
       </div>
 
-      <div v-if="totalWeeklyCourts > 4" class="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
+      <div v-if="totalWeeklyCourts > MAX_COURTS" class="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
         <AlertTriangle class="w-4 h-4 flex-shrink-0" />
-        <span>Weekly court limit exceeded! You have configured {{ totalWeeklyCourts }} courts. Maximum allowed per week is 4 courts.</span>
+        <span>Weekly court limit exceeded! You have configured {{ totalWeeklyCourts }} courts. Maximum allowed per week is {{ MAX_COURTS }} courts.</span>
       </div>
 
       <button
         @click="handleGenerate"
-        :disabled="totalWeeklyCourts > 4 || totalWeeklyCourts === 0"
+        :disabled="totalWeeklyCourts > MAX_COURTS || totalWeeklyCourts === 0"
         class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm transition flex items-center justify-center gap-2"
       >
         <Play class="w-4 h-4 fill-white" />

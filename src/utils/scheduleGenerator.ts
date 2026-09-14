@@ -89,7 +89,12 @@ export function getMatchDateForDay(baseStartDateStr: string, weekNum: number, ta
   return `${yyyy}-${mm}-${dd}`;
 }
 
-export function calculateCourtsFromShares(players: PlayerForScheduling[]): {
+export const MAX_COURTS: number = parseInt(import.meta.env.VITE_MAX_COURTS || '4', 10);
+
+export function calculateCourtsFromShares(
+  players: PlayerForScheduling[],
+  maxCourts: number = MAX_COURTS
+): {
   totalSinglesShares: number;
   totalDoublesShares: number;
   suggestedSinglesCourts: number;
@@ -113,7 +118,7 @@ export function calculateCourtsFromShares(players: PlayerForScheduling[]): {
     suggestedSinglesCourts,
     suggestedDoublesCourts,
     totalCourts,
-    isWithinWeeklyLimit: totalCourts <= 4,
+    isWithinWeeklyLimit: totalCourts <= maxCourts,
   };
 }
 

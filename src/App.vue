@@ -6,6 +6,7 @@ import PlayerIntake from './components/PlayerIntake.vue';
 import AuthModal from './components/AuthModal.vue';
 import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
 import MatchScheduleView from './components/MatchScheduleView.vue';
+import { notifySubRequested, notifySubClaimed } from './utils/discordNotifier';
 
 interface Player {
   id: string;
@@ -213,6 +214,8 @@ const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') =>
     return;
   }
 
+  const targetSlot = allSlots.value.find((s) => s.slot_id === slotId);
+
   const { error } = await supabase
     .from('match_slots')
     .update({ status })
@@ -221,6 +224,17 @@ const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') =>
   if (error) {
     notification.value = { text: error.message, error: true };
     return;
+  }
+
+  if (status === 'OPEN_SUB' && targetSlot) {
+    notifySubRequested({
+      week_number: targetSlot.week_number,
+      day_of_week: targetSlot.day_of_week,
+      match_date: targetSlot.match_date,
+      type: targetSlot.type,
+      court_number: targetSlot.court_number,
+      player_name: targetSlot.player_name,
+    });
   }
 
   notification.value = {
@@ -236,6 +250,8 @@ const claimSlot = async (slotId: string) => {
     return;
   }
 
+  const targetSlot = allSlots.value.find((s) => s.slot_id === slotId);
+
   // Call the atomic PostgreSQL RPC function
   const { data, error } = await supabase.rpc('claim_sub_slot', {
     target_slot_id: slotId,
@@ -249,6 +265,19 @@ const claimSlot = async (slotId: string) => {
 
   notification.value = { text: data.message, error: !data.success };
   if (data.success) {
+    if (targetSlot) {
+      notifySubClaimed(
+        {
+          week_number: targetSlot.week_number,
+          day_of_week: targetSlot.day_of_week,
+          match_date: targetSlot.match_date,
+          type: targetSlot.type,
+          court_number: targetSlot.court_number,
+          original_player: targetSlot.player_name,
+        },
+        activePlayerName.value || 'A League Player'
+      );
+    }
     await loadData();
   }
 };

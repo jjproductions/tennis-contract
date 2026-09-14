@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import { CheckCircle2, AlertTriangle, UserPlus, Users } from 'lucide-vue-next';
+import { notifyNewPlayerIntake } from '../utils/discordNotifier';
 
 interface PlayerRecord {
   id?: string;
@@ -96,6 +97,15 @@ const handleRegister = async () => {
   if (error) {
     statusMessage.value = { text: error.message, error: true };
   } else {
+    // Notify Discord channel
+    notifyNewPlayerIntake({
+      full_name: payload.full_name,
+      email: payload.email,
+      singles_share: payload.singles_share,
+      doubles_share: payload.doubles_share,
+      blackout_weeks: payload.blackout_weeks,
+    });
+
     if (isSelfUpdate) {
       statusMessage.value = { text: `Preferences updated successfully for ${fullName.value}!` };
     } else {

@@ -263,8 +263,8 @@ const handleReject = async (player: PlayerRecord) => {
               <span class="text-xs text-slate-500">({{ p.email }})</span>
             </div>
             <p class="text-xs text-slate-500 mt-0.5">
-              Singles: <span class="font-medium text-slate-700">{{ (p.singles_share * 100).toFixed(0) }}%</span> • 
-              Doubles: <span class="font-medium text-slate-700">{{ (p.doubles_share * 100).toFixed(0) }}%</span> • 
+              Singles: <span class="font-medium text-slate-700">{{ (p.singles_share * 100 % 1 === 0 ? (p.singles_share * 100).toFixed(0) : (p.singles_share * 100).toFixed(1)) }}%</span> • 
+              Doubles: <span class="font-medium text-slate-700">{{ (p.doubles_share * 100 % 1 === 0 ? (p.doubles_share * 100).toFixed(0) : (p.doubles_share * 100).toFixed(1)) }}%</span> • 
               Blackout Days: <span class="text-slate-600 font-medium">{{ p.blackout_days?.length ? p.blackout_days.join(', ') : 'None' }}</span> • 
               Blackout Weeks: <span class="text-slate-600 font-medium">{{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}</span>
             </p>

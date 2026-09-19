@@ -266,8 +266,8 @@ export async function notifyNewPlayerIntake(player: {
     color: 0x3B82F6, // Blue
     fields: [
       { name: 'Player Name', value: player.full_name, inline: true },
-      { name: 'Singles Share', value: `${(player.singles_share * 100).toFixed(0)}%`, inline: true },
-      { name: 'Doubles Share', value: `${(player.doubles_share * 100).toFixed(0)}%`, inline: true },
+      { name: 'Singles Share', value: `${(player.singles_share * 100 % 1 === 0 ? (player.singles_share * 100).toFixed(0) : (player.singles_share * 100).toFixed(1))}% (${Math.round(player.singles_share * 24)} matches)`, inline: true },
+      { name: 'Doubles Share', value: `${(player.doubles_share * 100 % 1 === 0 ? (player.doubles_share * 100).toFixed(0) : (player.doubles_share * 100).toFixed(1))}% (${Math.round(player.doubles_share * 24)} matches)`, inline: true },
       {
         name: 'Blackout Weeks',
         value: player.blackout_weeks?.length ? player.blackout_weeks.map(w => `Week ${w}`).join(', ') : 'None',

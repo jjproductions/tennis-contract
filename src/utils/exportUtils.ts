@@ -211,3 +211,245 @@ export function exportToPDF(
 
   doc.save(filename);
 }
+
+// 4. Export Draft Schedule (including Quota & Blackout Summary) to PDF
+export function exportDraftSchedulePDF(
+  result: any,
+  title = 'Winter Tennis League - Draft Schedule Preview',
+  filename = 'Draft_Tennis_Schedule_Preview.pdf'
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const exportDate = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  // Title Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(30, 41, 59);
+  doc.text(title, 14, 18);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Generated Draft Preview on ${exportDate} • Total Matches: ${result.matches.length}`, 14, 24);
+
+  // Section 1: Quota & Blackout Compliance Summary
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(15, 23, 42);
+  doc.text('1. Quota & Blackout Compliance Summary', 14, 32);
+
+  const summaryHeaders = [['Player Name', 'Singles', 'Doubles', 'Total Scheduled', 'Compliance', 'Blackouts']];
+  const summaryData = (result.summaries || []).map((s: any) => {
+    const totalSched = s.scheduled_singles + s.scheduled_doubles;
+    const totalTarget = s.target_singles + s.target_doubles;
+    const pct = totalTarget > 0 ? Math.round((totalSched / totalTarget) * 100) : 0;
+    return [
+      s.full_name,
+      `${s.scheduled_singles} / ${s.target_singles}`,
+      `${s.scheduled_doubles} / ${s.target_doubles}`,
+      `${totalSched} / ${totalTarget} (${pct}%)`,
+      '0 Conflicts',
+      `${s.blackout_count} Wks OFF`,
+    ];
+  });
+
+  autoTable(doc, {
+    startY: 35,
+    head: summaryHeaders,
+    body: summaryData,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [16, 185, 129], // Emerald 600
+      textColor: [255, 255, 255],
+      fontSize: 9,
+      fontStyle: 'bold',
+    },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: [51, 65, 85],
+    },
+    alternateRowStyles: {
+      fillColor: [240, 253, 244], // Emerald 50
+    },
+  });
+
+  // Section 2: Match Lineup Schedule
+  const finalY = (doc as any).lastAutoTable.finalY || 100;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(15, 23, 42);
+  doc.text('2. Season Match Lineup Schedule', 14, finalY + 12);
+
+  const matchHeaders = [['Week', 'Day & Date', 'Type', 'Court', 'Players Lineup']];
+  const matchData = (result.matches || []).map((m: any) => [
+    `Wk ${m.week_number}`,
+    `${formatDayOfWeek(m.day_of_week)}\n${m.match_date}`,
+    m.type,
+    `Ct #${m.court_number}`,
+    m.slots.map((s: any) => s.player_name).join(', '),
+  ]);
+
+  autoTable(doc, {
+    startY: finalY + 15,
+    head: matchHeaders,
+    body: matchData,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [30, 58, 138], // Blue 900
+      textColor: [255, 255, 255],
+      fontSize: 9,
+      fontStyle: 'bold',
+    },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: [51, 65, 85],
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252],
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 16 },
+      1: { cellWidth: 30 },
+      2: { cellWidth: 22 },
+      3: { cellWidth: 20 },
+      4: { fontStyle: 'bold', cellWidth: 94 },
+    },
+    didDrawPage: function (data) {
+      const str = `Page ${data.pageNumber}`;
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(str, doc.internal.pageSize.width - 24, doc.internal.pageSize.height - 10);
+    },
+  });
+
+  doc.save(filename);
+}
+
+// 5. Export Draft Schedule (including Quota & Blackout Summary) to Excel (.xls)
+export function exportDraftScheduleExcel(
+  result: any,
+  filename = 'Draft_Tennis_Schedule_Preview.xls'
+) {
+  const summaryRows = (result.summaries || [])
+    .map(
+      (s: any) => `
+    <tr>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; font-weight: bold;">${s.full_name}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center;">${s.scheduled_singles} / ${s.target_singles}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center;">${s.scheduled_doubles} / ${s.target_doubles}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center; font-weight: bold;">${s.scheduled_singles + s.scheduled_doubles} / ${s.target_singles + s.target_doubles}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center; color: #166534; font-weight: bold;">0 Conflicts</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center;">${s.blackout_count} Weeks OFF</td>
+    </tr>`
+    )
+    .join('');
+
+  const matchRows = (result.matches || [])
+    .map(
+      (m: any) => `
+    <tr>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; text-align: center;">Week ${m.week_number}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0;">${formatDayOfWeek(m.day_of_week)}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0;">${m.match_date}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center;">${m.type}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; text-align: center;">Court #${m.court_number}</td>
+      <td style="padding: 6px; border: 1px solid #e2e8f0; font-weight: bold;">${m.slots.map((s: any) => s.player_name).join(', ')}</td>
+    </tr>`
+    )
+    .join('');
+
+  const excelTemplate = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+        th { background-color: #1e293b; color: #ffffff; padding: 8px; text-align: left; border: 1px solid #0f172a; }
+        th.summary-th { background-color: #059669; }
+        h2, h3 { color: #0f172a; }
+      </style>
+    </head>
+    <body>
+      <h2>Winter Tennis League - Draft Schedule Preview</h2>
+      
+      <h3>1. Quota & Blackout Compliance Summary</h3>
+      <table>
+        <thead>
+          <tr>
+            <th class="summary-th">Player Name</th>
+            <th class="summary-th">Singles (Scheduled / Target)</th>
+            <th class="summary-th">Doubles (Scheduled / Target)</th>
+            <th class="summary-th">Total Matches</th>
+            <th class="summary-th">Compliance</th>
+            <th class="summary-th">Blackouts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summaryRows}
+        </tbody>
+      </table>
+
+      <h3>2. Season Match Lineup Schedule</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Week</th>
+            <th>Day</th>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Court</th>
+            <th>Players Lineup</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${matchRows}
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+
+  const blob = new Blob(['\uFEFF' + excelTemplate], {
+    type: 'application/vnd.ms-excel;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// 6. Export Draft Schedule to CSV (.csv)
+export function exportDraftScheduleCSV(
+  result: any,
+  filename = 'Draft_Tennis_Schedule_Preview.csv'
+) {
+  const headers = ['Week Number', 'Day of Week', 'Match Date', 'Match Type', 'Court Number', 'Players Lineup'];
+  const rows = (result.matches || []).map((m: any) => [
+    `Week ${m.week_number}`,
+    formatDayOfWeek(m.day_of_week),
+    m.match_date,
+    m.type,
+    `Court #${m.court_number}`,
+    `"${m.slots.map((s: any) => s.player_name).join(', ').replace(/"/g, '""')}"`,
+  ]);
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}

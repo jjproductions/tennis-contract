@@ -409,7 +409,12 @@ const claimSlot = async (slotId: string) => {
     </div>
 
     <!-- View 1: Intake -->
-    <PlayerIntake v-if="currentView === 'intake'" @registered="loadData" />
+    <PlayerIntake
+      v-if="currentView === 'intake'"
+      :session="session"
+      :is-admin="isAdmin"
+      @registered="loadData"
+    />
 
     <!-- View 2: Schedule & Sub Board -->
     <MatchScheduleView

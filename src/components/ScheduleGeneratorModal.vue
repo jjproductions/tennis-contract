@@ -199,6 +199,12 @@ const activePlayerBlackoutWeeks = computed<Set<number>>(() => {
   return new Set(player?.blackout_weeks || []);
 });
 
+const activePlayerBlackoutDays = computed<string[]>(() => {
+  if (!activePlayerId.value) return [];
+  const player = props.players.find((p) => p.id === activePlayerId.value);
+  return player?.blackout_days || [];
+});
+
 const playerWeekBreakdownMap = computed(() => {
   const map = new Map<string, Map<number, WeekMatchCount>>();
   if (!generatedResult.value) return map;
@@ -228,6 +234,7 @@ const activePlayerSummary = computed(() => {
   const playerWeeks = playerWeekBreakdownMap.value.get(activePlayerId.value);
   const totalWeeks = playerWeeks ? playerWeeks.size : 0;
   const blackoutCount = activePlayerBlackoutWeeks.value.size;
+  const blackoutDaysList = activePlayerBlackoutDays.value;
   const isPinned = selectedPlayerId.value === activePlayerId.value && !hoveredPlayerId.value;
 
   return {
@@ -237,6 +244,7 @@ const activePlayerSummary = computed(() => {
     scheduledSingles: summary.scheduled_singles,
     scheduledDoubles: summary.scheduled_doubles,
     blackoutCount,
+    blackoutDaysList,
     isPinned,
   };
 });
@@ -542,7 +550,10 @@ const getWeekBadgeText = (w: number) => {
               <span class="text-emerald-600 font-bold">{{ activePlayerSummary.scheduledDoubles }} Doubles</span>
               )
               <span v-if="activePlayerSummary.blackoutCount > 0" class="font-bold text-slate-900 ml-1">
-                • {{ activePlayerSummary.blackoutCount }} Blackout (OFF)
+                • {{ activePlayerSummary.blackoutCount }} Wks OFF
+              </span>
+              <span v-if="activePlayerSummary.blackoutDaysList && activePlayerSummary.blackoutDaysList.length > 0" class="font-bold text-amber-700 ml-1">
+                • {{ activePlayerSummary.blackoutDaysList.join(', ') }} OFF
               </span>
             </span>
           </div>

@@ -20,6 +20,7 @@ interface PlayerRecord {
   singles_share: number;
   doubles_share: number;
   blackout_weeks: number[];
+  blackout_days?: string[];
   approved?: boolean;
   is_admin?: boolean;
 }
@@ -264,7 +265,8 @@ const handleReject = async (player: PlayerRecord) => {
             <p class="text-xs text-slate-500 mt-0.5">
               Singles: <span class="font-medium text-slate-700">{{ (p.singles_share * 100).toFixed(0) }}%</span> • 
               Doubles: <span class="font-medium text-slate-700">{{ (p.doubles_share * 100).toFixed(0) }}%</span> • 
-              Blackouts: <span class="text-slate-600">{{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}</span>
+              Blackout Days: <span class="text-slate-600 font-medium">{{ p.blackout_days?.length ? p.blackout_days.join(', ') : 'None' }}</span> • 
+              Blackout Weeks: <span class="text-slate-600 font-medium">{{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}</span>
             </p>
           </div>
 

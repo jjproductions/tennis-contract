@@ -255,6 +255,7 @@ export async function notifyNewPlayerIntake(player: {
   singles_share: number;
   doubles_share: number;
   blackout_weeks: number[];
+  blackout_days?: string[];
 }): Promise<void> {
   await fetchGlobalDiscordSettings();
   if (!hasWebhookConfigured() || !isNotificationEnabled('new_player_intake')) return;
@@ -269,8 +270,13 @@ export async function notifyNewPlayerIntake(player: {
       { name: 'Doubles Share', value: `${(player.doubles_share * 100).toFixed(0)}%`, inline: true },
       {
         name: 'Blackout Weeks',
-        value: player.blackout_weeks.length > 0 ? player.blackout_weeks.map(w => `Week ${w}`).join(', ') : 'None',
-        inline: false,
+        value: player.blackout_weeks?.length ? player.blackout_weeks.map(w => `Week ${w}`).join(', ') : 'None',
+        inline: true,
+      },
+      {
+        name: 'Blackout Days',
+        value: player.blackout_days?.length ? player.blackout_days.join(', ') : 'None',
+        inline: true,
       },
     ],
   };

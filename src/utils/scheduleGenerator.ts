@@ -5,6 +5,7 @@ export interface PlayerForScheduling {
   singles_share: number;
   doubles_share: number;
   blackout_weeks: number[];
+  blackout_days?: string[];
 }
 
 export interface DayCourtConfig {
@@ -180,9 +181,13 @@ export function generateSeasonSchedule(
       const dayScheduledSet = scheduledTodayByDay[dayName];
       const matchDate = getMatchDateForDay(options.startDate, w, dayName);
 
+      const dayAvailablePlayers = availablePlayers.filter(
+        (p) => !p.blackout_days || !p.blackout_days.includes(dayName)
+      );
+
       // 1. Process Singles Courts for this day
       for (let c = 1; c <= dayConfig.singlesCourts; c++) {
-        const eligibleSingles = availablePlayers.filter(
+        const eligibleSingles = dayAvailablePlayers.filter(
           (p) => Number(p.singles_share || 0) > 0 && !dayScheduledSet.has(p.id)
         );
 
@@ -228,7 +233,7 @@ export function generateSeasonSchedule(
       // 2. Process Doubles Courts for this day
       for (let c = 1; c <= dayConfig.doublesCourts; c++) {
         const courtNum = dayConfig.singlesCourts + c;
-        const eligibleDoubles = availablePlayers.filter(
+        const eligibleDoubles = dayAvailablePlayers.filter(
           (p) => Number(p.doubles_share || 0) > 0 && !dayScheduledSet.has(p.id)
         );
 

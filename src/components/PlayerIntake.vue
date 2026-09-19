@@ -11,6 +11,7 @@ interface PlayerRecord {
   singles_share: number;
   doubles_share: number;
   blackout_weeks: number[];
+  blackout_days?: string[];
 }
 
 const emit = defineEmits(['registered']);
@@ -21,8 +22,11 @@ const email = ref('');
 const singlesShare = ref<number>(0.5);
 const doublesShare = ref<number>(0.5);
 const selectedBlackouts = ref<number[]>([]);
+const selectedBlackoutDays = ref<string[]>([]);
 const isSubmitting = ref(false);
 const statusMessage = ref<{ text: string; error?: boolean } | null>(null);
+
+const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 const shareOptions = [
   { label: '0% (0 matches)', value: 0 },
@@ -35,7 +39,7 @@ const shareOptions = [
 const loadRoster = async () => {
   const { data } = await supabase
     .from('players')
-    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks')
+    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, blackout_days')
     .order('created_at', { ascending: true });
   if (data) registeredPlayers.value = data;
 };
@@ -55,6 +59,14 @@ const toggleBlackout = (week: number) => {
     selectedBlackouts.value = selectedBlackouts.value.filter((w) => w !== week);
   } else {
     selectedBlackouts.value.push(week);
+  }
+};
+
+const toggleBlackoutDay = (day: string) => {
+  if (selectedBlackoutDays.value.includes(day)) {
+    selectedBlackoutDays.value = selectedBlackoutDays.value.filter((d) => d !== day);
+  } else {
+    selectedBlackoutDays.value.push(day);
   }
 };
 
@@ -82,6 +94,7 @@ const handleRegister = async () => {
     singles_share: singlesShare.value,
     doubles_share: doublesShare.value,
     blackout_weeks: selectedBlackouts.value.sort((a, b) => a - b),
+    blackout_days: selectedBlackoutDays.value,
   };
 
   // New registrations default to pending approval
@@ -104,6 +117,7 @@ const handleRegister = async () => {
       singles_share: payload.singles_share,
       doubles_share: payload.doubles_share,
       blackout_weeks: payload.blackout_weeks,
+      blackout_days: payload.blackout_days,
     });
 
     if (isSelfUpdate) {
@@ -114,6 +128,7 @@ const handleRegister = async () => {
     fullName.value = '';
     email.value = '';
     selectedBlackouts.value = [];
+    selectedBlackoutDays.value = [];
     await loadRoster();
     emit('registered');
   }
@@ -222,10 +237,32 @@ const handleRegister = async () => {
           </div>
         </div>
 
+        <!-- Blackout Days Selector (Day of Week) -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            Blackout Days (Select specific days of the week you CANNOT play)
+          </label>
+          <div class="flex flex-wrap gap-1.5 pt-1">
+            <button
+              v-for="day in daysOfWeek"
+              :key="day"
+              type="button"
+              @click="toggleBlackoutDay(day)"
+              :class="selectedBlackoutDays.includes(day) ? 'bg-amber-500 text-white border-amber-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-200'"
+              class="text-xs font-medium px-3 py-1.5 rounded-lg border transition text-center"
+            >
+              {{ day }}s
+            </button>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1.5">
+            You will not be scheduled for matches on highlighted blackout days.
+          </p>
+        </div>
+
         <!-- Blackout Weeks Selector -->
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">
-            Blackout Weeks (Select any weeks you know you will be away)
+            Blackout Weeks (Select any full weeks you know you will be away)
           </label>
           <div class="grid grid-cols-6 sm:grid-cols-12 gap-1.5 pt-1">
             <button
@@ -274,6 +311,7 @@ const handleRegister = async () => {
             <th class="pb-2">Singles</th>
             <th class="pb-2">Doubles</th>
             <th class="pb-2">Total Matches</th>
+            <th class="pb-2">Blackout Days</th>
             <th class="pb-2">Blackout Weeks</th>
           </tr>
         </thead>
@@ -283,6 +321,9 @@ const handleRegister = async () => {
             <td class="py-2">{{ (p.singles_share * 100).toFixed(0) }}% ({{ p.singles_share * 24 }})</td>
             <td class="py-2">{{ (p.doubles_share * 100).toFixed(0) }}% ({{ p.doubles_share * 24 }})</td>
             <td class="py-2 font-medium">{{ p.singles_share * 24 + p.doubles_share * 24 }}</td>
+            <td class="py-2 text-slate-500">
+              {{ p.blackout_days?.length ? p.blackout_days.join(', ') : 'None' }}
+            </td>
             <td class="py-2 text-slate-500">
               {{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}
             </td>

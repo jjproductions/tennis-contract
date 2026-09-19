@@ -140,7 +140,7 @@ const loadData = async () => {
   // 2. Fetch Pending Player Intake Registrations for Admin Approval
   const { data: pendingData, error: pendingErr } = await supabase
     .from('players')
-    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, approved')
+    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, blackout_days, approved')
     .eq('approved', false)
     .order('created_at', { ascending: false });
   

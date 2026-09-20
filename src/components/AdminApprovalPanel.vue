@@ -69,6 +69,25 @@ const approvedPlayers = computed(() => {
   return allPlayers.value.filter((p) => p.approved !== false);
 });
 
+const getBlackoutWeekRanges = (weeks?: number[]): string[] => {
+  if (!weeks || weeks.length === 0) return [];
+  const sorted = [...weeks].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let end = start;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push(start === end ? `W${start}` : `W${start}–${end}`);
+      start = sorted[i];
+      end = start;
+    }
+  }
+  ranges.push(start === end ? `W${start}` : `W${start}–${end}`);
+  return ranges;
+};
+
 const handleToggleEvent = async (key: keyof DiscordNotificationConfig) => {
   eventConfig.value[key] = !eventConfig.value[key];
   const res = await saveGlobalDiscordSettings(webhookUrlInput.value, eventConfig.value);
@@ -266,7 +285,7 @@ const handleReject = async (player: PlayerRecord) => {
               Singles: <span class="font-medium text-slate-700">{{ (p.singles_share * 100 % 1 === 0 ? (p.singles_share * 100).toFixed(0) : (p.singles_share * 100).toFixed(1)) }}%</span> • 
               Doubles: <span class="font-medium text-slate-700">{{ (p.doubles_share * 100 % 1 === 0 ? (p.doubles_share * 100).toFixed(0) : (p.doubles_share * 100).toFixed(1)) }}%</span> • 
               Blackout Days: <span class="text-slate-600 font-medium">{{ p.blackout_days?.length ? p.blackout_days.join(', ') : 'None' }}</span> • 
-              Blackout Weeks: <span class="text-slate-600 font-medium">{{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}</span>
+              Blackout Weeks: <span class="text-slate-600 font-medium">{{ getBlackoutWeekRanges(p.blackout_weeks).length ? getBlackoutWeekRanges(p.blackout_weeks).join(', ') : 'None' }}</span>
             </p>
           </div>
 

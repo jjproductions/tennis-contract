@@ -297,7 +297,7 @@ const claimSlot = async (slotId: string) => {
     <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-slate-800">Indoor Winter Tennis Portal</h1>
-        <p class="text-sm text-slate-500">Vue 3 + Supabase Self-Service Sub & Swap Manager</p>
+        <!-- <p class="text-sm text-slate-500">Vue 3 + Supabase Self-Service Sub & Swap Manager</p> -->
       </div>
 
       <!-- Auth Status Badge -->

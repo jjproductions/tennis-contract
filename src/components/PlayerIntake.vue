@@ -53,6 +53,37 @@ const formatShareMatches = (share: number): number => {
   return Math.round(Number(share || 0) * 24);
 };
 
+const getFirstName = (fullName: string): string => {
+  if (!fullName) return '';
+  const parts = fullName.trim().split(/\s+/);
+  return parts[0] || '';
+};
+
+const getLastName = (fullName: string): string => {
+  if (!fullName) return '';
+  const parts = fullName.trim().split(/\s+/);
+  return parts.length > 1 ? parts.slice(1).join(' ') : '';
+};
+
+const getBlackoutWeekRanges = (weeks?: number[]): string[] => {
+  if (!weeks || weeks.length === 0) return [];
+  const sorted = [...weeks].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let end = start;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push(start === end ? `W${start}` : `W${start}–${end}`);
+      start = sorted[i];
+      end = start;
+    }
+  }
+  ranges.push(start === end ? `W${start}` : `W${start}–${end}`);
+  return ranges;
+};
+
 const shareOptions = [
   { label: '0% (0 matches)', value: 0 },
   { label: '1/8 Share - 12.5% (3 matches)', value: 0.125 },
@@ -418,36 +449,65 @@ const handleRegister = async () => {
     <!-- Registered Roster Table -->
     <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
       <h3 class="text-sm font-bold text-slate-700 mb-3">Submitted Preferences Roster</h3>
-      <table class="w-full text-xs text-left">
+      <table class="w-full text-xs text-left border-collapse">
         <thead>
-          <tr class="border-b text-slate-400">
-            <th class="pb-2">Player</th>
-            <th class="pb-2">Singles</th>
-            <th class="pb-2">Doubles</th>
-            <th class="pb-2">Total Matches</th>
-            <th class="pb-2">Blackout Days</th>
-            <th class="pb-2">Blackout Weeks</th>
-            <th class="pb-2 text-right">Actions</th>
+          <tr class="border-b border-slate-200 text-slate-400 font-semibold">
+            <th class="pb-2 px-2">Player</th>
+            <th class="pb-2 px-2 whitespace-nowrap">Singles</th>
+            <th class="pb-2 px-2 whitespace-nowrap">Doubles</th>
+            <th class="pb-2 px-2 whitespace-nowrap text-center">Total Matches</th>
+            <th class="pb-2 px-2 whitespace-nowrap">Blackout Days</th>
+            <th class="pb-2 px-2 whitespace-nowrap">Blackout Weeks</th>
+            <th class="pb-2 px-2 text-right">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
           <tr v-for="p in registeredPlayers" :key="p.id" :class="editingPlayerId === p.id ? 'bg-amber-50/60 font-medium' : ''">
-            <td class="py-2 font-semibold text-slate-800 flex items-center gap-1.5">
-              <span>{{ p.full_name }}</span>
-              <span v-if="editingPlayerId === p.id" class="text-[9px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-bold">
+            <td class="py-2.5 px-2 font-semibold text-slate-800 align-top">
+              <div class="leading-tight">
+                <div class="text-slate-900 font-bold">{{ getFirstName(p.full_name) }}</div>
+                <div v-if="getLastName(p.full_name)" class="text-slate-600 font-medium">{{ getLastName(p.full_name) }}</div>
+              </div>
+              <span v-if="editingPlayerId === p.id" class="text-[9px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-bold inline-block mt-1">
                 Editing
               </span>
             </td>
-            <td class="py-2">{{ formatSharePercentage(p.singles_share) }} ({{ formatShareMatches(p.singles_share) }})</td>
-            <td class="py-2">{{ formatSharePercentage(p.doubles_share) }} ({{ formatShareMatches(p.doubles_share) }})</td>
-            <td class="py-2 font-medium">{{ formatShareMatches(p.singles_share) + formatShareMatches(p.doubles_share) }}</td>
-            <td class="py-2 text-slate-500">
-              {{ p.blackout_days?.length ? p.blackout_days.join(', ') : 'None' }}
+            <td class="py-2.5 px-2 align-top whitespace-nowrap">
+              <div class="font-semibold text-slate-800">{{ formatSharePercentage(p.singles_share) }}</div>
+              <div class="text-[10px] text-slate-400">({{ formatShareMatches(p.singles_share) }})</div>
             </td>
-            <td class="py-2 text-slate-500">
-              {{ p.blackout_weeks?.length ? p.blackout_weeks.map(w => `W${w}`).join(', ') : 'None' }}
+            <td class="py-2.5 px-2 align-top whitespace-nowrap">
+              <div class="font-semibold text-slate-800">{{ formatSharePercentage(p.doubles_share) }}</div>
+              <div class="text-[10px] text-slate-400">({{ formatShareMatches(p.doubles_share) }})</div>
             </td>
-            <td class="py-2 text-right">
+            <td class="py-2.5 px-2 align-top text-center whitespace-nowrap font-bold text-slate-700">
+              {{ formatShareMatches(p.singles_share) + formatShareMatches(p.doubles_share) }}
+            </td>
+            <td class="py-2.5 px-2 align-top">
+              <div v-if="p.blackout_days?.length" class="flex flex-wrap gap-1">
+                <span
+                  v-for="d in p.blackout_days"
+                  :key="d"
+                  class="bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                >
+                  {{ d }}
+                </span>
+              </div>
+              <span v-else class="text-slate-300 select-none">—</span>
+            </td>
+            <td class="py-2.5 px-2 align-top">
+              <div v-if="p.blackout_weeks?.length" class="flex flex-wrap gap-1">
+                <span
+                  v-for="range in getBlackoutWeekRanges(p.blackout_weeks)"
+                  :key="range"
+                  class="bg-rose-100 text-rose-700 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                >
+                  {{ range }}
+                </span>
+              </div>
+              <span v-else class="text-slate-300 select-none">—</span>
+            </td>
+            <td class="py-2.5 px-2 text-right align-top">
               <button
                 v-if="canEditPlayer(p)"
                 @click="editPlayer(p)"

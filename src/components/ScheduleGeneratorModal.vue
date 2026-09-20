@@ -6,6 +6,7 @@ import {
   calculateCourtsFromShares,
   getMatchDateForDay,
   formatDayOfWeek,
+  compareMatches,
   MAX_COURTS,
   type PlayerForScheduling,
   type ScheduleGenResult,
@@ -199,7 +200,9 @@ const handlePublish = async () => {
 
 const weekMatches = computed(() => {
   if (!generatedResult.value) return [];
-  return generatedResult.value.matches.filter((m) => m.week_number === selectedPreviewWeek.value);
+  return generatedResult.value.matches
+    .filter((m) => m.week_number === selectedPreviewWeek.value)
+    .sort(compareMatches);
 });
 
 const formattedMondayDate = computed(() => {

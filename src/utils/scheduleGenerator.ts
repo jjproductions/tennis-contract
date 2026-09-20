@@ -14,6 +14,63 @@ export interface DayCourtConfig {
   doublesCourts: number;
 }
 
+const DAY_ORDER: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+export function getDayOrderIndex(day: string): number {
+  if (!day) return 99;
+  const lower = day.toLowerCase().trim();
+  return DAY_ORDER[lower] ?? 99;
+}
+
+export interface MatchLike {
+  week_number: number;
+  day_of_week?: string;
+  match_date?: string;
+  type?: 'SINGLES' | 'DOUBLES' | string;
+  court_number?: number;
+}
+
+export function compareMatches<T extends MatchLike>(a: T, b: T): number {
+  // 1. Week number ascending
+  if (a.week_number !== b.week_number) {
+    return a.week_number - b.week_number;
+  }
+
+  // 2. Days together (ordered chronologically by match_date if present, else day_of_week index)
+  if (a.match_date && b.match_date && a.match_date !== b.match_date) {
+    const dateComp = a.match_date.localeCompare(b.match_date);
+    if (dateComp !== 0) return dateComp;
+  } else {
+    const dayIdxA = getDayOrderIndex(a.day_of_week || '');
+    const dayIdxB = getDayOrderIndex(b.day_of_week || '');
+    if (dayIdxA !== dayIdxB) {
+      return dayIdxA - dayIdxB;
+    }
+  }
+
+  // 3. Match type: SINGLES first, then DOUBLES
+  const typeA = (a.type || '').toUpperCase();
+  const typeB = (b.type || '').toUpperCase();
+  if (typeA !== typeB) {
+    if (typeA === 'SINGLES') return -1;
+    if (typeB === 'SINGLES') return 1;
+    return typeA.localeCompare(typeB);
+  }
+
+  // 4. Court number ascending
+  const courtA = a.court_number ?? 0;
+  const courtB = b.court_number ?? 0;
+  return courtA - courtB;
+}
+
 export function formatDayOfWeek(day: string): string {
   if (!day) return '';
   const lower = day.toLowerCase();
@@ -292,6 +349,8 @@ export function generateSeasonSchedule(
   const totalDoublesTarget = summaries.reduce((acc, s) => acc + s.target_doubles, 0);
   const totalSinglesScheduled = summaries.reduce((acc, s) => acc + s.scheduled_singles, 0);
   const totalDoublesScheduled = summaries.reduce((acc, s) => acc + s.scheduled_doubles, 0);
+
+  generatedMatches.sort(compareMatches);
 
   return {
     matches: generatedMatches,

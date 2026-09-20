@@ -16,7 +16,7 @@ import {
   FileCode,
   ChevronDown,
 } from 'lucide-vue-next';
-import { formatDayOfWeek } from '../utils/scheduleGenerator';
+import { formatDayOfWeek, compareMatches } from '../utils/scheduleGenerator';
 import { exportToCSV, exportToExcel, exportToPDF } from '../utils/exportUtils';
 
 export interface MatchSlotView {
@@ -98,10 +98,7 @@ const groupedMatches = computed<GroupedMatch[]>(() => {
     map.get(slot.match_id)!.slots.push(slot);
   });
 
-  return Array.from(map.values()).sort((a, b) => {
-    if (a.week_number !== b.week_number) return a.week_number - b.week_number;
-    return a.court_number - b.court_number;
-  });
+  return Array.from(map.values()).sort(compareMatches);
 });
 
 // Available weeks for selector

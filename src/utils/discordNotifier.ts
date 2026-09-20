@@ -184,45 +184,77 @@ export function setWebhookUrl(url: string): void {
  * Check if a Discord Webhook URL is configured
  */
 export function hasWebhookConfigured(): boolean {
-  return getWebhookUrl().length > 0;
+  // Webhooks are managed by Cloudflare Workers KV proxy by default, or via local override
+  return true;
 }
 
 /**
- * Send raw payload to configured Discord Webhook
+ * Send raw payload to configured Discord Webhook or Cloudflare Worker Proxy
  */
-export async function sendDiscordPayload(embed: DiscordEmbed, targetUrl?: string): Promise<{ success: boolean; message: string }> {
-  const webhookUrl = targetUrl || getWebhookUrl();
+export async function sendDiscordPayload(
+  embed: DiscordEmbed,
+  target: 'public' | 'admin' = 'public',
+  targetUrl?: string
+): Promise<{ success: boolean; message: string }> {
+  // If a direct Discord URL is explicitly provided (e.g. from manual test in admin panel), post directly
+  if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://discord.com'))) {
+    const payload = {
+      username: 'Winter Tennis League Bot',
+      avatar_url: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=128&auto=format&fit=crop&q=80',
+      embeds: [
+        {
+          footer: {
+            text: 'Winter Tennis League Notifications 🎾',
+          },
+          timestamp: new Date().toISOString(),
+          ...embed,
+        },
+      ],
+    };
 
-  if (!webhookUrl) {
-    return { success: false, message: 'No Discord Webhook URL configured.' };
+    try {
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok || response.status === 204) {
+        return { success: true, message: 'Notification sent successfully to Discord!' };
+      } else {
+        const errText = await response.text();
+        return { success: false, message: `Discord API error (${response.status}): ${errText || response.statusText}` };
+      }
+    } catch (err: any) {
+      return { success: false, message: `Network error sending Discord notification: ${err.message || err}` };
+    }
   }
 
-  const payload = {
-    username: 'Winter Tennis League Bot',
-    avatar_url: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=128&auto=format&fit=crop&q=80',
-    embeds: [
-      {
-        footer: {
-          text: 'Winter Tennis League Notifications 🎾',
-        },
-        timestamp: new Date().toISOString(),
-        ...embed,
-      },
-    ],
-  };
-
+  // Default: dispatch to Cloudflare Worker proxy endpoint
   try {
-    const response = await fetch(webhookUrl, {
+    const response = await fetch('/api/notify-discord', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        sport: 'tennis',
+        leagueId: 'winter-contract-kyle',
+        target,
+        title: embed.title,
+        message: embed.description,
+        color: embed.color,
+        fields: embed.fields,
+        embed,
+      }),
     });
 
-    if (response.ok || response.status === 204) {
-      return { success: true, message: 'Notification sent successfully to Discord!' };
+    if (response.ok) {
+      return { success: true, message: `Notification delivered to ${target} channel!` };
     } else {
-      const errText = await response.text();
-      return { success: false, message: `Discord API error (${response.status}): ${errText || response.statusText}` };
+      const errJson = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errJson.error || `Proxy error (${response.status})`,
+      };
     }
   } catch (err: any) {
     return { success: false, message: `Network error sending Discord notification: ${err.message || err}` };
@@ -232,38 +264,55 @@ export async function sendDiscordPayload(embed: DiscordEmbed, targetUrl?: string
 /**
  * Test the Discord Webhook connection
  */
-export async function testDiscordWebhook(customUrl?: string): Promise<{ success: boolean; message: string }> {
+export async function testDiscordWebhook(
+  targetOrUrl?: 'public' | 'admin' | string
+): Promise<{ success: boolean; message: string }> {
+  let target: 'public' | 'admin' = 'public';
+  let customUrl: string | undefined = undefined;
+
+  if (targetOrUrl === 'admin' || targetOrUrl === 'public') {
+    target = targetOrUrl;
+  } else if (targetOrUrl && targetOrUrl.trim().length > 0) {
+    customUrl = targetOrUrl.trim();
+  }
+
   const embed: DiscordEmbed = {
     title: '🎾 Discord Webhook Connected!',
-    description: 'Winter Tennis League notifications are successfully linked to this channel. You will receive real-time alerts for schedule updates, sub requests, and league announcements.',
+    description: `Linked to ${target} channel! You will receive real-time alerts & schedule updates.`,
     color: 0x10B981, // Emerald Green
     fields: [
       { name: 'Status', value: '✅ Active & Ready', inline: true },
+      { name: 'Channel', value: target.toUpperCase(), inline: true },
       { name: 'Environment', value: 'Winter Tennis Portal', inline: true },
     ],
   };
 
-  return sendDiscordPayload(embed, customUrl);
+  return sendDiscordPayload(embed, target, customUrl);
 }
 
 /**
- * Notify when a new player submits registration intake
+ * Notify when a new player submits registration intake (or updates existing preferences)
  */
-export async function notifyNewPlayerIntake(player: {
-  full_name: string;
-  email: string;
-  singles_share: number;
-  doubles_share: number;
-  blackout_weeks: number[];
-  blackout_days?: string[];
-}): Promise<void> {
+export async function notifyNewPlayerIntake(
+  player: {
+    full_name: string;
+    email: string;
+    singles_share: number;
+    doubles_share: number;
+    blackout_weeks: number[];
+    blackout_days?: string[];
+  },
+  isUpdate = false
+): Promise<void> {
   await fetchGlobalDiscordSettings();
   if (!hasWebhookConfigured() || !isNotificationEnabled('new_player_intake')) return;
 
   const embed: DiscordEmbed = {
-    title: '📝 New Player Registration Received',
-    description: `**${player.full_name}** has submitted registration details for the Winter Tennis season!`,
-    color: 0x3B82F6, // Blue
+    title: isUpdate ? '✏️ Player Preferences Updated' : '📝 New Player Registration Received',
+    description: isUpdate
+      ? `**${player.full_name}** has updated their league preferences & blackout dates.`
+      : `**${player.full_name}** has submitted registration details for the Winter Tennis season!`,
+    color: isUpdate ? 0x6366f1 : 0x3b82f6, // Indigo for updates, Blue for new
     fields: [
       { name: 'Player Name', value: player.full_name, inline: true },
       { name: 'Singles Share', value: `${(player.singles_share * 100 % 1 === 0 ? (player.singles_share * 100).toFixed(0) : (player.singles_share * 100).toFixed(1))}% (${Math.round(player.singles_share * 24)} matches)`, inline: true },
@@ -281,7 +330,7 @@ export async function notifyNewPlayerIntake(player: {
     ],
   };
 
-  await sendDiscordPayload(embed);
+  await sendDiscordPayload(embed, 'admin');
 }
 
 /**
@@ -301,7 +350,7 @@ export async function notifyPlayerApproved(player: { full_name: string; email: s
     ],
   };
 
-  await sendDiscordPayload(embed);
+  await sendDiscordPayload(embed, 'public');
 }
 
 /**
@@ -328,7 +377,7 @@ export async function notifySchedulePublished(stats: {
     ],
   };
 
-  await sendDiscordPayload(embed);
+  await sendDiscordPayload(embed, 'public');
 }
 
 /**
@@ -357,7 +406,7 @@ export async function notifySubRequested(slot: {
     ],
   };
 
-  await sendDiscordPayload(embed);
+  await sendDiscordPayload(embed, 'public');
 }
 
 /**
@@ -388,7 +437,7 @@ export async function notifySubClaimed(
     ],
   };
 
-  await sendDiscordPayload(embed);
+  await sendDiscordPayload(embed, 'public');
 }
 
 /**
@@ -398,7 +447,8 @@ export async function sendCustomBroadcast(
   title: string,
   message: string,
   alertType: 'info' | 'warning' | 'announcement' | 'urgent' = 'announcement',
-  authorName?: string
+  authorName?: string,
+  target: 'public' | 'admin' = 'public'
 ): Promise<{ success: boolean; message: string }> {
   await fetchGlobalDiscordSettings();
   if (!hasWebhookConfigured()) {
@@ -426,5 +476,5 @@ export async function sendCustomBroadcast(
     fields: authorName ? [{ name: 'Posted By', value: authorName, inline: true }] : undefined,
   };
 
-  return sendDiscordPayload(embed);
+  return sendDiscordPayload(embed, target);
 }

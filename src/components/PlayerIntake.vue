@@ -231,15 +231,19 @@ const handleRegister = async () => {
   if (error) {
     statusMessage.value = { text: error.message, error: true };
   } else {
-    // Notify Discord channel
-    notifyNewPlayerIntake({
-      full_name: payload.full_name,
-      email: payload.email,
-      singles_share: payload.singles_share,
-      doubles_share: payload.doubles_share,
-      blackout_weeks: payload.blackout_weeks,
-      blackout_days: payload.blackout_days,
-    });
+    // Notify Discord admin channel
+    const isUpdateAction = isSelfUpdate || props.isAdmin || !!editingPlayerId.value;
+    notifyNewPlayerIntake(
+      {
+        full_name: payload.full_name,
+        email: payload.email,
+        singles_share: payload.singles_share,
+        doubles_share: payload.doubles_share,
+        blackout_weeks: payload.blackout_weeks,
+        blackout_days: payload.blackout_days,
+      },
+      isUpdateAction
+    );
 
     if (isSelfUpdate || props.isAdmin) {
       statusMessage.value = { text: `Preferences saved successfully for ${fullName.value}!` };

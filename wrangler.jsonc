@@ -1,21 +1,26 @@
 {
     "name": "tennis-contract",
     "compatibility_date": "2026-09-18",
+    "main": "src/worker.ts",
     "assets": {
-        "directory": "./dist",
+        "directory": "dist",
         "not_found_handling": "single-page-application"
     },
-    "vars": {
-        "VITE_SUPABASE_URL": "https://xewakmemcnyirazguubl.supabase.co",
-        "VITE_DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/1548456002519699549/1q6vxuA8lS8qMqNnL8yt_LqTCbR3QB3a6soP8m2Bg07vZPOQ7h5LVhdYvCFUVoLwXHaC"
-    },
+    "kv_namespaces": [
+        {
+            "binding": "DISCORD_WEBHOOKS",
+            "id": "30e66368ab5e4562ba40e9f7a6d9e5ad"
+        }
+    ],
     "env": {
         "staging": {
-            "name": "tennis-contract-staging",
-            "vars": {
-                "VITE_SUPABASE_URL": "https://yvzibdxhzqpdychqvjvd.supabase.co",
-                "VITE_DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/1551307206937546858/fI3-9TUDvghbl5QBtdol5ly8BNz4MqE9c0EWlemQbZjGNHwHDU5eFSpNN00J9l7zICsF"
-            }
+            "name": "tennis-contract",
+            "kv_namespaces": [
+                {
+                    "binding": "DISCORD_WEBHOOKS",
+                    "id": "ca28c1be93514091869828192d38675d"
+                }
+            ]
         }
     }
 }

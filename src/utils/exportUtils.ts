@@ -1,5 +1,3 @@
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { formatDayOfWeek } from './scheduleGenerator';
 
 export interface MatchSlotView {
@@ -130,11 +128,15 @@ export function exportToExcel(slots: MatchSlotView[], filename = 'Winter_Tennis_
 }
 
 // 3. Export to PDF
-export function exportToPDF(
+export async function exportToPDF(
   slots: MatchSlotView[],
   title = 'Winter Tennis League Schedule',
   filename = 'Winter_Tennis_Schedule.pdf'
 ) {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
   // Title & Header
@@ -213,11 +215,15 @@ export function exportToPDF(
 }
 
 // 4. Export Draft Schedule (including Quota & Blackout Summary) to PDF
-export function exportDraftSchedulePDF(
+export async function exportDraftSchedulePDF(
   result: any,
   title = 'Winter Tennis League - Draft Schedule Preview',
   filename = 'Draft_Tennis_Schedule_Preview.pdf'
 ) {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const exportDate = new Date().toLocaleDateString('en-US', {
     month: 'short',

@@ -149,6 +149,13 @@ const cancelEdit = () => {
 
 onMounted(loadRoster);
 
+// Active players with share > 0%
+const activeRegisteredPlayers = computed(() =>
+  registeredPlayers.value.filter(
+    (p) => Number(p.singles_share || 0) > 0 || Number(p.doubles_share || 0) > 0
+  )
+);
+
 // Quota totals
 const totalSingles = computed(() =>
   registeredPlayers.value.reduce((acc, p) => acc + Number(p.singles_share), 0)
@@ -231,15 +238,19 @@ const handleRegister = async () => {
   if (error) {
     statusMessage.value = { text: error.message, error: true };
   } else {
-    // Notify Discord channel
-    notifyNewPlayerIntake({
-      full_name: payload.full_name,
-      email: payload.email,
-      singles_share: payload.singles_share,
-      doubles_share: payload.doubles_share,
-      blackout_weeks: payload.blackout_weeks,
-      blackout_days: payload.blackout_days,
-    });
+    // Notify Discord admin channel
+    const isUpdateAction = isSelfUpdate || props.isAdmin || !!editingPlayerId.value;
+    notifyNewPlayerIntake(
+      {
+        full_name: payload.full_name,
+        email: payload.email,
+        singles_share: payload.singles_share,
+        doubles_share: payload.doubles_share,
+        blackout_weeks: payload.blackout_weeks,
+        blackout_days: payload.blackout_days,
+      },
+      isUpdateAction
+    );
 
     if (isSelfUpdate || props.isAdmin) {
       statusMessage.value = { text: `Preferences saved successfully for ${fullName.value}!` };
@@ -261,10 +272,29 @@ const handleRegister = async () => {
   <div class="space-y-6">
     <!-- Quota & Capacity Status Board -->
     <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-      <h2 class="text-base font-bold text-slate-800 flex items-center gap-2 mb-3">
-        <Users class="w-5 h-5 text-indigo-600" />
-        League Capacity Tracker ({{ registeredPlayers.length }}/14 Registered)
-      </h2>
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+          <Users class="w-5 h-5 text-indigo-600" />
+          League Capacity & Demand Tracker
+        </h2>
+        <span class="text-xs font-medium text-slate-500">
+          {{ activeRegisteredPlayers.length }} Players Registered
+        </span>
+      </div>
+
+      <!-- Capacity Alert Notice -->
+      <div v-if="(totalSingles + totalDoubles) > 14.0" class="mb-3 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-center gap-2 font-medium">
+        <AlertTriangle class="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <span>Demand is over court capacity by {{ ((totalSingles + totalDoubles) - 14.0).toFixed(2) }} shares. Adjust player shares in the roster table below to balance.</span>
+      </div>
+      <div v-else-if="(totalSingles + totalDoubles) === 14.0" class="mb-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2 font-medium">
+        <CheckCircle2 class="w-4 h-4 text-emerald-600 flex-shrink-0" />
+        <span>League court capacity is perfectly balanced at 14.00 total shares!</span>
+      </div>
+      <div v-else class="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2 font-medium">
+        <AlertTriangle class="w-4 h-4 text-amber-600 flex-shrink-0" />
+        <span>{{ (14.0 - (totalSingles + totalDoubles)).toFixed(2) }} shares remaining to reach full 14.00 court capacity.</span>
+      </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <!-- Singles Quota -->

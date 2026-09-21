@@ -1,0 +1,26 @@
+{
+    "name": "tennis-contract",
+    "compatibility_date": "2026-09-18",
+    "main": "src/worker.ts",
+    "assets": {
+        "directory": "dist",
+        "not_found_handling": "single-page-application"
+    },
+    "kv_namespaces": [
+        {
+            "binding": "DISCORD_WEBHOOKS",
+            "id": "30e66368ab5e4562ba40e9f7a6d9e5ad"
+        }
+    ],
+    "env": {
+        "staging": {
+            "name": "tennis-contract",
+            "kv_namespaces": [
+                {
+                    "binding": "DISCORD_WEBHOOKS",
+                    "id": "ca28c1be93514091869828192d38675d"
+                }
+            ]
+        }
+    }
+}

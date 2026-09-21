@@ -24,6 +24,7 @@ const isConfirmationSent = ref(false);
 const isResetSent = ref(false);
 const isRecoveryMode = ref(props.mode === 'recovery');
 const resetNotice = ref<string | null>(null);
+const pendingPassword = ref('');
 
 const loading = ref(false);
 const errorMsg = ref<string | null>(null);
@@ -92,7 +93,8 @@ const handleSendOtp = async () => {
     }
   } else {
     isOtpSent.value = true;
-    successMsg.value = `Magic Link & 6-Digit Passcode sent to ${email.value}! If clicking the magic link in your email, you may close this window. Or enter your 6-digit code below:`;
+    showCodeInput.value = true;
+    successMsg.value = `A 6-digit passcode has been sent to ${email.value}! Enter your code below to log in:`;
   }
 };
 
@@ -100,30 +102,74 @@ const handleVerifyOtp = async () => {
   errorMsg.value = null;
   successMsg.value = null;
 
-  if (!otpCode.value.trim()) {
+  const code = otpCode.value.trim();
+  const userEmail = email.value.trim();
+
+  if (!code) {
     errorMsg.value = 'Please enter the 6-digit code from your email.';
     return;
   }
 
   loading.value = true;
 
-  const { error } = await supabase.auth.verifyOtp({
-    email: email.value.trim(),
-    token: otpCode.value.trim(),
-    type: 'email',
+  // 1. Try with type 'magiclink' (standard for signInWithOtp)
+  let { error } = await supabase.auth.verifyOtp({
+    email: userEmail,
+    token: code,
+    type: 'magiclink',
   });
+
+  // 2. Fallback to 'signup' if user is a new signup
+  if (error) {
+    const resSignup = await supabase.auth.verifyOtp({
+      email: userEmail,
+      token: code,
+      type: 'signup',
+    });
+    if (!resSignup.error) {
+      error = null;
+    } else {
+      // 3. Fallback to 'email'
+      const resEmail = await supabase.auth.verifyOtp({
+        email: userEmail,
+        token: code,
+        type: 'email',
+      });
+      if (!resEmail.error) {
+        error = null;
+      }
+    }
+  }
 
   loading.value = false;
 
   if (error) {
-    errorMsg.value = error.message;
+    if (error.status === 403 || error.message.toLowerCase().includes('token')) {
+      errorMsg.value = 'Invalid or expired 6-digit passcode. Please double-check the code or click "Back / Re-enter email" to request a fresh code.';
+    } else {
+      errorMsg.value = error.message;
+    }
   } else {
-    successMsg.value = 'Authenticated successfully!';
-    emit('authenticated', { type: 'magic_link', email: email.value.trim() });
+    // If setting a 1st time password during OTP verification
+    if (pendingPassword.value) {
+      const { error: updateErr } = await supabase.auth.updateUser({
+        password: pendingPassword.value,
+      });
+      pendingPassword.value = '';
+      if (updateErr) {
+        errorMsg.value = `Authenticated via code, but failed to save password: ${updateErr.message}`;
+        return;
+      }
+      successMsg.value = 'Password created and account activated successfully!';
+      emit('authenticated', { type: 'password_created', email: userEmail });
+    } else {
+      successMsg.value = 'Authenticated successfully!';
+      emit('authenticated', { type: 'otp_code', email: userEmail });
+    }
   }
 };
 
-// Reset Password via Email Flow
+// Reset / Create Password via OTP Flow
 const handleResetPassword = async () => {
   errorMsg.value = null;
   successMsg.value = null;
@@ -147,8 +193,11 @@ const handleResetPassword = async () => {
     return;
   }
 
-  const { error } = await supabase.auth.resetPasswordForEmail(email.value.trim(), {
-    redirectTo: window.location.origin,
+  const { error } = await supabase.auth.signInWithOtp({
+    email: email.value.trim(),
+    options: {
+      emailRedirectTo: window.location.origin,
+    },
   });
 
   loading.value = false;
@@ -156,8 +205,10 @@ const handleResetPassword = async () => {
   if (error) {
     errorMsg.value = error.message;
   } else {
-    resetNotice.value = `We sent a password setup link to ${email.value.trim()}.`;
-    isResetSent.value = true;
+    isOtpSent.value = true;
+    showCodeInput.value = true;
+    activeTab.value = 'magic-link';
+    successMsg.value = `A 6-digit passcode has been sent to ${email.value.trim()}! Enter your code below to verify and log in.`;
   }
 };
 
@@ -207,7 +258,7 @@ const handlePasswordAuth = async () => {
     return;
   }
 
-  // Confirmation check when creating a new password
+  // 1st Time Password Creation: Verify with 6-digit OTP code
   if (isSignUp.value) {
     if (!confirmPassword.value.trim()) {
       errorMsg.value = 'Please confirm your password.';
@@ -221,92 +272,67 @@ const handlePasswordAuth = async () => {
       errorMsg.value = 'Password must be at least 6 characters long.';
       return;
     }
-  }
 
-  loading.value = true;
+    loading.value = true;
 
-  // 1. Whitelist Check
-  const { valid, status, name } = await isEmailWhitelisted(email.value);
-  if (!valid) {
+    // 1. Whitelist Check
+    const { valid, status, name } = await isEmailWhitelisted(email.value);
+    if (!valid) {
+      loading.value = false;
+      if (status === 'pending') {
+        errorMsg.value = `Welcome ${name || 'player'}! Your intake submission is received and currently pending Admin approval. You will be able to log in as soon as the Admin approves your request.`;
+      } else {
+        errorMsg.value = 'This email is not registered on the official league roster. Please switch to "Player Intake" to submit your registration.';
+      }
+      return;
+    }
+
+    // 2. Save pending password & send 6-digit OTP code to email
+    pendingPassword.value = password.value.trim();
+
+    const { error: otpErr } = await supabase.auth.signInWithOtp({
+      email: email.value.trim(),
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+
     loading.value = false;
-    if (status === 'pending') {
-      errorMsg.value = `Welcome ${name || 'player'}! Your intake submission is received and currently pending Admin approval. You will be able to log in as soon as the Admin approves your request.`;
+
+    if (otpErr) {
+      if (otpErr.message.toLowerCase().includes('rate limit')) {
+        errorMsg.value = 'Email sending limit reached. Please wait a few minutes before requesting another code.';
+      } else {
+        errorMsg.value = otpErr.message;
+      }
     } else {
-      errorMsg.value = 'This email is not registered on the official league roster. Please switch to "Player Intake" to submit your registration.';
+      isOtpSent.value = true;
+      showCodeInput.value = true;
+      activeTab.value = 'magic-link';
+      successMsg.value = `A 6-digit passcode has been sent to ${email.value.trim()}! Enter your code below to verify and save your new password.`;
     }
     return;
   }
 
-  // 2. Authenticate or Sign Up
-  if (isSignUp.value) {
-    const { data, error } = await supabase.auth.signUp({
-      email: email.value.trim(),
-      password: password.value.trim(),
-    });
+  // Regular Sign In with Password
+  loading.value = true;
+  const { error } = await supabase.auth.signInWithPassword({
+    email: email.value.trim(),
+    password: password.value.trim(),
+  });
+  loading.value = false;
 
-    if (error) {
-      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already exists')) {
-        // User already registered -> automatically trigger reset email
-        const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.value.trim(), {
-          redirectTo: window.location.origin,
-        });
-        loading.value = false;
-        if (!resetErr) {
-          resetNotice.value = `An account already exists for ${email.value.trim()}. We automatically sent a Password Activation link to your email inbox!`;
-          isResetSent.value = true;
-        } else {
-          errorMsg.value = resetErr.message;
-        }
-      } else {
-        loading.value = false;
-        errorMsg.value = error.message;
-      }
-    } else if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
-      // User already exists in Supabase Auth (identities array empty)
-      // Supabase did NOT send a signup confirmation email. We must send a reset password email!
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.value.trim(), {
-        redirectTo: window.location.origin,
-      });
-      loading.value = false;
-      if (!resetErr) {
-        resetNotice.value = `Your email address (${email.value.trim()}) was already on file in the portal. We sent a Password Activation link to your email inbox!`;
-        isResetSent.value = true;
-      } else {
-        errorMsg.value = resetErr.message;
-      }
-    } else if (!data.session) {
-      loading.value = false;
-      // Brand new user in Supabase Auth -> confirmation link sent by Supabase
-      isConfirmationSent.value = true;
+  if (error) {
+    if (error.message.includes('Invalid login credentials')) {
+      errorMsg.value = 'Invalid password. If this is your first time logging in with a password, click "First time? Create Password" below or use 6-Digit Passcode.';
     } else {
-      loading.value = false;
-      // User is immediately authenticated with a session
-      emit('authenticated', {
-        type: 'password_created',
-        email: email.value.trim(),
-        name: name || 'Player',
-      });
+      errorMsg.value = error.message;
     }
   } else {
-    const { error } = await supabase.auth.signInWithPassword({
+    emit('authenticated', {
+      type: 'signed_in',
       email: email.value.trim(),
-      password: password.value.trim(),
     });
-    loading.value = false;
-
-    if (error) {
-      if (error.message.includes('Invalid login credentials')) {
-        errorMsg.value = 'Invalid password. If this is your first time logging in with a password, click "First time? Create Password" below or use Magic Link.';
-      } else {
-        errorMsg.value = error.message;
-      }
-    } else {
-      emit('authenticated', {
-        type: 'signed_in',
-        email: email.value.trim(),
-        name: name || 'Player',
-      });
-    }
   }
 };
 </script>
@@ -343,7 +369,7 @@ const handlePasswordAuth = async () => {
           class="flex-1 py-3 text-xs text-center border-b-2 transition flex items-center justify-center gap-1.5"
         >
           <Sparkles class="w-4 h-4 text-amber-500" />
-          Magic Link / OTP
+          6-Digit Passcode
         </button>
         <button
           type="button"
@@ -454,13 +480,13 @@ const handlePasswordAuth = async () => {
             >
               <span v-if="loading">Checking roster & sending code...</span>
               <span v-else class="flex items-center gap-2">
-                Send Magic Code / Link
+                Send 6-Digit Passcode
                 <ArrowRight class="w-4 h-4" />
               </span>
             </button>
           </div>
 
-          <!-- Magic Link Sent Screen -->
+          <!-- 6-Digit Passcode Sent Screen -->
           <div v-else class="space-y-4 text-center py-2">
             <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
               <Mail class="w-6 h-6" />
@@ -468,20 +494,20 @@ const handlePasswordAuth = async () => {
             <div>
               <h4 class="text-base font-bold text-slate-800">Check Your Email Inbox</h4>
               <p class="text-xs text-slate-600 mt-1">
-                We sent a magic link to <span class="font-semibold text-slate-800">{{ email }}</span>.
+                We sent a 6-digit passcode to <span class="font-semibold text-slate-800">{{ email }}</span>.
               </p>
               <div class="text-xs text-slate-600 mt-3 bg-emerald-50/80 p-3 rounded-xl border border-emerald-200 text-left space-y-1">
                 <p class="font-semibold text-emerald-900">How to log in:</p>
                 <ol class="list-decimal list-inside space-y-1 text-[11px] text-emerald-800">
-                  <li>Open the email from <strong>Supabase / Winter Tennis</strong>.</li>
-                  <li>Click the <strong>"Log In"</strong> link inside the email.</li>
-                  <li>You will be logged in automatically! You can close this window now.</li>
+                  <li>Open the email from <strong>"Play League"</strong>.</li>
+                  <li>Copy or note your <strong>6-digit passcode</strong>.</li>
+                  <li>Enter your 6-digit code below to log in.</li>
                 </ol>
               </div>
             </div>
 
-            <!-- Optional 6-digit code input -->
-            <div v-if="showCodeInput" class="space-y-3 pt-2 text-left border-t border-slate-100">
+            <!-- 6-digit code input -->
+            <div class="space-y-3 pt-2 text-left border-t border-slate-100">
               <label class="block text-xs font-medium text-slate-700">Enter 6-Digit Email Code</label>
               <input
                 v-model="otpCode"
@@ -496,20 +522,14 @@ const handlePasswordAuth = async () => {
                 :disabled="loading"
                 class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg transition"
               >
-                Verify Passcode
+                <span v-if="loading">Verifying passcode...</span>
+                <span v-else>Verify Passcode & Log In</span>
               </button>
             </div>
 
             <div class="flex flex-col gap-2 pt-1">
               <button
-                v-if="!showCodeInput"
-                @click="showCodeInput = true"
-                class="text-xs text-blue-600 hover:underline font-medium"
-              >
-                Received a 6-digit passcode instead? Enter code
-              </button>
-              <button
-                @click="isOtpSent = false; showCodeInput = false; otpCode = '';"
+                @click="isOtpSent = false; otpCode = '';"
                 class="text-xs text-slate-400 hover:text-slate-600"
               >
                 ← Back / Re-enter email
@@ -576,8 +596,8 @@ const handlePasswordAuth = async () => {
             :disabled="loading"
             class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            <span v-if="loading">Authenticating...</span>
-            <span v-else>{{ isSignUp ? 'Create Password & Sign In' : 'Sign In with Password' }}</span>
+            <span v-if="loading">Sending 6-digit code...</span>
+            <span v-else>{{ isSignUp ? 'Send Code & Create Password' : 'Sign In with Password' }}</span>
           </button>
 
           <div class="flex justify-between items-center pt-2 text-xs text-slate-500">
@@ -613,7 +633,7 @@ const handlePasswordAuth = async () => {
             <div class="text-xs text-slate-600 mt-3 bg-amber-50 p-3 rounded-xl border border-amber-200 text-left space-y-1.5">
               <p class="font-bold text-amber-900">What to do next:</p>
               <ol class="list-decimal list-inside space-y-1 text-[11px] text-amber-800">
-                <li>Open the confirmation email from <strong>Supabase / Winter Tennis</strong>.</li>
+                <li>Open the confirmation email from <strong>"Play League"</strong>.</li>
                 <li>Click the <strong>"Confirm Email / Activate Account"</strong> link inside.</li>
                 <li>Return to this portal and sign in using your email & password!</li>
               </ol>

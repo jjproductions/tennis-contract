@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import {
   generateSeasonSchedule,
@@ -23,13 +23,91 @@ const props = defineProps<{
 const emit = defineEmits(['scheduled']);
 
 const startDate = ref<string>('2026-10-19'); // Default to Monday
+const excludedDatesInput = ref<string>(''); // For holidays/closed dates
 
-// Predetermined weekly schedule (Mon: 1 Singles, Tue: 2 Doubles, Wed: 1 Singles)
+onMounted(async () => {
+  try {
+    const { data } = await supabase
+      .from('league_settings')
+      .select('value')
+      .eq('key', 'schedule_settings')
+      .maybeSingle();
+    
+    if (data?.value) {
+      if (data.value.excludedDates) {
+        excludedDatesInput.value = data.value.excludedDates.join('\n');
+      }
+      if (data.value.startDate) {
+        startDate.value = data.value.startDate;
+      }
+      if (data.value.dailySchedule) {
+        dailySchedule.value = data.value.dailySchedule;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load schedule settings', err);
+  }
+});
+
+// Predetermined weekly schedule (Mon: Ct #4, Tue: Ct #5 & #6, Wed: Ct #2)
 const dailySchedule = ref<DayCourtConfig[]>([
-  { dayOfWeek: 'Monday', singlesCourts: 1, doublesCourts: 0 },
-  { dayOfWeek: 'Tuesday', singlesCourts: 0, doublesCourts: 2 },
-  { dayOfWeek: 'Wednesday', singlesCourts: 1, doublesCourts: 0 },
+  { dayOfWeek: 'Monday', totalCourts: 1, courtNumbers: [4] },
+  { dayOfWeek: 'Tuesday', totalCourts: 2, courtNumbers: [5, 6] },
+  { dayOfWeek: 'Wednesday', totalCourts: 1, courtNumbers: [2] },
 ]);
+
+// Helper to keep court number arrays synced with court counts (and prevent duplicates)
+const syncCourtNumbers = (day: DayCourtConfig) => {
+  if (!day.courtNumbers) day.courtNumbers = [];
+  const count = Math.max(0, day.totalCourts || 0);
+  while (day.courtNumbers.length < count) {
+    const used = new Set(day.courtNumbers);
+    let nextNum = 1;
+    while (used.has(nextNum)) {
+      nextNum++;
+    }
+    day.courtNumbers.push(nextNum);
+  }
+  if (day.courtNumbers.length > count) {
+    day.courtNumbers.splice(count);
+  }
+};
+
+// Check for duplicate court numbers on the same day
+const courtConflictError = computed<string | null>(() => {
+  for (const day of dailySchedule.value) {
+    const courts = (day.courtNumbers || []).slice(0, day.totalCourts);
+
+    const seen = new Set<number>();
+    const duplicates = new Set<number>();
+
+    for (const num of courts) {
+      if (num === null || num === undefined || isNaN(num)) continue;
+      if (seen.has(num)) {
+        duplicates.add(num);
+      } else {
+        seen.add(num);
+      }
+    }
+
+    if (duplicates.size > 0) {
+      const dupsStr = Array.from(duplicates).map((n) => `Court #${n}`).join(', ');
+      return `Court conflict on ${day.dayOfWeek}: ${dupsStr} is assigned multiple times.`;
+    }
+  }
+  return null;
+});
+
+const hasDayCourtConflict = (day: DayCourtConfig): boolean => {
+  const courts = (day.courtNumbers || []).slice(0, day.totalCourts);
+  const seen = new Set<number>();
+  for (const num of courts) {
+    if (num === null || num === undefined || isNaN(num)) continue;
+    if (seen.has(num)) return true;
+    seen.add(num);
+  }
+  return false;
+};
 
 const generatedResult = ref<ScheduleGenResult | null>(null);
 const selectedPreviewWeek = ref<number>(1);
@@ -82,19 +160,19 @@ const shareCapacity = computed(() => {
 // Total courts per week configured (Fixed 4 courts)
 const totalWeeklyCourts = computed(() => {
   return dailySchedule.value.reduce(
-    (acc, d) => acc + (d.singlesCourts || 0) + (d.doublesCourts || 0),
+    (acc, d) => acc + (d.totalCourts || 0),
     0
   );
 });
 
 const handleResetToPredetermined = () => {
   dailySchedule.value = [
-    { dayOfWeek: 'Monday', singlesCourts: 1, doublesCourts: 0 },
-    { dayOfWeek: 'Tuesday', singlesCourts: 0, doublesCourts: 2 },
-    { dayOfWeek: 'Wednesday', singlesCourts: 1, doublesCourts: 0 },
+    { dayOfWeek: 'Monday', totalCourts: 1, courtNumbers: [4] },
+    { dayOfWeek: 'Tuesday', totalCourts: 2, courtNumbers: [5, 6] },
+    { dayOfWeek: 'Wednesday', totalCourts: 1, courtNumbers: [2] },
   ];
   statusMessage.value = {
-    text: 'Court schedule reset to predetermined default (Mon: 1 Singles, Tue: 2 Doubles, Wed: 1 Singles).',
+    text: 'Court schedule reset to predetermined default (Mon: Ct #4, Tue: Ct #5 & #6, Wed: Ct #2).',
   };
 };
 
@@ -121,10 +199,18 @@ const handleGenerate = () => {
     return;
   }
 
+  dailySchedule.value.forEach((day) => syncCourtNumbers(day));
+
+  const excludedDates = excludedDatesInput.value
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
   const result = generateSeasonSchedule(props.players, {
     startDate: startDate.value,
     numWeeks: 24,
     dailySchedule: dailySchedule.value,
+    excludedDates,
   });
 
   generatedResult.value = result;
@@ -142,6 +228,25 @@ const handlePublish = async () => {
   statusMessage.value = null;
 
   try {
+    // 0. Save schedule settings globally
+    const excludedDates = excludedDatesInput.value
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    await supabase.from('league_settings').upsert(
+      {
+        key: 'schedule_settings',
+        value: { 
+          excludedDates,
+          startDate: startDate.value,
+          dailySchedule: dailySchedule.value,
+        },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' }
+    );
+
     // 1. Delete existing match slots and matches
     await supabase.from('match_slots').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000');
@@ -206,6 +311,13 @@ const weekMatches = computed(() => {
 });
 
 const formattedMondayDate = computed(() => {
+  if (weekMatches.value.length > 0) {
+    const dates = weekMatches.value.map(m => m.match_date).sort();
+    const [year, month, day] = dates[0].split('-').map(Number);
+    const d = new Date(year, month - 1, day);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   if (!startDate.value) return '';
   const dateStr = getMatchDateForDay(startDate.value, selectedPreviewWeek.value, 'Monday');
   const [year, month, day] = dateStr.split('-').map(Number);
@@ -351,18 +463,30 @@ const getWeekBadgeText = (w: number) => {
       </div>
 
       <!-- General Settings & Share Demand Summary -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-        <div>
-          <label class="block font-semibold text-slate-700 mb-1">Season Start Date (Week 1)</label>
-          <input
-            v-model="startDate"
-            type="date"
-            class="w-full p-2 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
-          />
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
+        <div class="space-y-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Season Start Date (Week 1)</label>
+            <input
+              v-model="startDate"
+              type="date"
+              class="w-full p-2 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Holidays / Closed Dates</label>
+            <textarea
+              v-model="excludedDatesInput"
+              placeholder="e.g. 2024-11-28&#10;2024-12-25"
+              rows="3"
+              class="w-full p-2 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+            ></textarea>
+            <p class="text-[10px] text-slate-500 mt-1">Format: YYYY-MM-DD (1 per line). These dates will be skipped.</p>
+          </div>
         </div>
 
         <!-- Live Demand vs Capacity Monitor -->
-        <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 col-span-2 flex flex-col justify-center space-y-1">
+        <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 col-span-1 sm:col-span-3 flex flex-col justify-center space-y-1">
           <div class="flex justify-between items-center text-xs font-semibold text-slate-700">
             <span>Approved Roster Demand:</span>
             <span
@@ -393,41 +517,56 @@ const getWeekBadgeText = (w: number) => {
           <div
             v-for="day in dailySchedule"
             :key="day.dayOfWeek"
-            class="p-3 rounded-lg border text-center space-y-2 bg-indigo-50/50 border-indigo-200"
+            class="p-3 rounded-lg border text-center space-y-2 transition"
+            :class="hasDayCourtConflict(day) ? 'bg-rose-50/60 border-rose-300 ring-1 ring-rose-300' : 'bg-indigo-50/50 border-indigo-200'"
           >
             <div class="font-bold text-xs text-slate-800 border-b pb-1.5 border-indigo-200/60 flex items-center justify-center gap-1.5">
               <span>{{ day.dayOfWeek }}</span>
+              <AlertTriangle v-if="hasDayCourtConflict(day)" class="w-3.5 h-3.5 text-rose-600" title="Court number conflict on this day" />
             </div>
 
             <div class="space-y-2 text-[11px]">
               <div>
-                <label class="block text-[10px] font-medium text-slate-500 mb-0.5">Singles Courts</label>
+                <label class="block text-[10px] font-medium text-slate-500 mb-0.5">Total Courts</label>
                 <input
-                  v-model.number="day.singlesCourts"
+                  v-model.number="day.totalCourts"
+                  @input="syncCourtNumbers(day)"
                   type="number"
                   min="0"
                   :max="MAX_COURTS"
                   class="w-full text-center border rounded p-1 text-xs font-semibold bg-white"
                 />
-              </div>
-
-              <div>
-                <label class="block text-[10px] font-medium text-slate-500 mb-0.5">Doubles Courts</label>
-                <input
-                  v-model.number="day.doublesCourts"
-                  type="number"
-                  min="0"
-                  :max="MAX_COURTS"
-                  class="w-full text-center border rounded p-1 text-xs font-semibold bg-white"
-                />
+                <!-- Inline Court Badges -->
+                <div v-if="day.totalCourts > 0" class="mt-1 flex items-center justify-center gap-1 text-[10px] text-slate-600">
+                  <span class="font-medium text-slate-400 text-[9px]">Ct #:</span>
+                  <div class="flex gap-1 flex-wrap justify-center">
+                    <template v-for="(_, idx) in day.totalCourts" :key="'c-' + idx">
+                      <input
+                        v-if="day.courtNumbers"
+                        v-model.number="day.courtNumbers[idx]"
+                        type="number"
+                        min="1"
+                        max="99"
+                        title="Designated Court Number"
+                        class="w-9 text-center border rounded py-0.5 text-xs font-bold text-indigo-700 bg-white border-indigo-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        :class="{ 'border-rose-400 text-rose-700 bg-rose-50': hasDayCourtConflict(day) }"
+                      />
+                    </template>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div class="text-[11px] font-bold text-indigo-900 pt-0.5 border-t border-indigo-200/60">
-              {{ day.singlesCourts + day.doublesCourts }} Court{{ (day.singlesCourts + day.doublesCourts) === 1 ? '' : 's' }}
+              {{ day.totalCourts }} Court{{ day.totalCourts === 1 ? '' : 's' }}
             </div>
           </div>
         </div>
+      </div>
+
+      <div v-if="courtConflictError" class="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
+        <AlertTriangle class="w-4 h-4 flex-shrink-0" />
+        <span>{{ courtConflictError }}</span>
       </div>
 
       <div v-if="totalWeeklyCourts > MAX_COURTS" class="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
@@ -437,7 +576,7 @@ const getWeekBadgeText = (w: number) => {
 
       <button
         @click="handleGenerate"
-        :disabled="totalWeeklyCourts > MAX_COURTS || totalWeeklyCourts === 0"
+        :disabled="totalWeeklyCourts > MAX_COURTS || totalWeeklyCourts === 0 || !!courtConflictError"
         class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm transition flex items-center justify-center gap-2"
       >
         <Play class="w-4 h-4 fill-white" />

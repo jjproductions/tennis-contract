@@ -10,8 +10,14 @@ export interface PlayerForScheduling {
 
 export interface DayCourtConfig {
   dayOfWeek: 'Sunday' | 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | string;
-  singlesCourts: number;
-  doublesCourts: number;
+  totalCourts: number;
+  courtNumbers?: number[];
+  
+  // Legacy fields for backwards compatibility
+  singlesCourts?: number;
+  doublesCourts?: number;
+  singlesCourtNumbers?: number[];
+  doublesCourtNumbers?: number[];
 }
 
 const DAY_ORDER: Record<string, number> = {
@@ -113,6 +119,7 @@ export interface ScheduleGenOptions {
   startDate: string; // YYYY-MM-DD (e.g. Week 1 start date)
   numWeeks?: number; // 24
   dailySchedule?: DayCourtConfig[];
+  excludedDates?: string[];
   // Legacy / fallback single-day options
   dayOfWeek?: string;
   singlesCourtsPerWeek?: number;
@@ -189,7 +196,7 @@ export function generateSeasonSchedule(
   let activeDailySchedule: DayCourtConfig[] = [];
   if (options.dailySchedule && options.dailySchedule.length > 0) {
     activeDailySchedule = options.dailySchedule.filter(
-      (d) => d.singlesCourts > 0 || d.doublesCourts > 0
+      (d) => (d.totalCourts ?? (d.singlesCourts! + d.doublesCourts!)) > 0
     );
   }
 
@@ -198,16 +205,33 @@ export function generateSeasonSchedule(
     activeDailySchedule = [
       {
         dayOfWeek: options.dayOfWeek || 'Sunday',
-        singlesCourts: options.singlesCourtsPerWeek ?? 3,
-        doublesCourts: options.doublesCourtsPerWeek ?? 2,
+        totalCourts: (options.singlesCourtsPerWeek ?? 3) + (options.doublesCourtsPerWeek ?? 2),
       },
     ];
   }
 
   const weeklyCourtsCount = activeDailySchedule.reduce(
-    (acc, d) => acc + d.singlesCourts + d.doublesCourts,
+    (acc, d) => acc + (d.totalCourts ?? (d.singlesCourts! + d.doublesCourts!)),
     0
   );
+
+  const excludedDatesSet = new Set(options.excludedDates || []);
+  const validDatesPerDay: Record<string, string[]> = {};
+
+  activeDailySchedule.forEach((dayConfig) => {
+    const dayName = dayConfig.dayOfWeek;
+    validDatesPerDay[dayName] = [];
+    let weekOffset = 1;
+    // generate the next 24 valid dates for this day of the week
+    while (validDatesPerDay[dayName].length < numWeeks) {
+      const candidateDate = getMatchDateForDay(options.startDate, weekOffset, dayName);
+      if (!excludedDatesSet.has(candidateDate)) {
+        validDatesPerDay[dayName].push(candidateDate);
+      }
+      weekOffset++;
+      if (weekOffset > numWeeks + 52) break; // sanity check to prevent infinite loop
+    }
+  });
 
   // Track player match counts
   const singlesCount: Record<string, number> = {};
@@ -220,6 +244,25 @@ export function generateSeasonSchedule(
     lastWeekPlayed[p.id] = -5;
   });
 
+  // Calculate season-long demand and capacity
+  const totalSinglesShares = players.reduce((acc, p) => acc + Number(p.singles_share || 0), 0);
+  const totalDoublesShares = players.reduce((acc, p) => acc + Number(p.doubles_share || 0), 0);
+  
+  const demandSinglesMatches = (totalSinglesShares * numWeeks) / 2;
+  const demandDoublesMatches = (totalDoublesShares * numWeeks) / 4;
+  const totalDemand = demandSinglesMatches + demandDoublesMatches;
+  
+  const totalCapacityMatches = weeklyCourtsCount * numWeeks;
+  
+  let allocatedSingles = demandSinglesMatches;
+  
+  if (totalCapacityMatches > 0 && totalDemand > 0) {
+    const singlesRatio = demandSinglesMatches / totalDemand;
+    allocatedSingles = Math.round(totalCapacityMatches * singlesRatio);
+  }
+  
+  let scheduledSinglesMatches = 0;
+  let scheduledDoublesMatches = 0;
   const generatedMatches: GeneratedMatch[] = [];
 
   for (let w = 1; w <= numWeeks; w++) {
@@ -227,7 +270,6 @@ export function generateSeasonSchedule(
       (p) => !p.blackout_weeks || !p.blackout_weeks.includes(w)
     );
 
-    // Track players who play on each specific day of week w so nobody plays twice on the same day
     const scheduledTodayByDay: Record<string, Set<string>> = {};
 
     activeDailySchedule.forEach((dayConfig) => {
@@ -236,95 +278,95 @@ export function generateSeasonSchedule(
         scheduledTodayByDay[dayName] = new Set<string>();
       }
       const dayScheduledSet = scheduledTodayByDay[dayName];
-      const matchDate = getMatchDateForDay(options.startDate, w, dayName);
+      const matchDate = validDatesPerDay[dayName][w - 1];
 
       const dayAvailablePlayers = availablePlayers.filter(
         (p) => !p.blackout_days || !p.blackout_days.includes(dayName)
       );
 
-      // 1. Process Singles Courts for this day
-      for (let c = 1; c <= dayConfig.singlesCourts; c++) {
-        const eligibleSingles = dayAvailablePlayers.filter(
-          (p) => Number(p.singles_share || 0) > 0 && !dayScheduledSet.has(p.id)
-        );
+      const courtsCount = dayConfig.totalCourts ?? (dayConfig.singlesCourts! + dayConfig.doublesCourts!);
 
-        const candidates = [...eligibleSingles].sort((a, b) => {
-          const targetA = Math.round(a.singles_share * numWeeks);
-          const targetB = Math.round(b.singles_share * numWeeks);
-          const remA = targetA - singlesCount[a.id];
-          const remB = targetB - singlesCount[b.id];
-
-          const hasQuotaA = remA > 0 ? 1 : 0;
-          const hasQuotaB = remB > 0 ? 1 : 0;
-          if (hasQuotaA !== hasQuotaB) return hasQuotaB - hasQuotaA;
-
-          const ratioA = targetA > 0 ? (singlesCount[a.id] || 0) / targetA : 1;
-          const ratioB = targetB > 0 ? (singlesCount[b.id] || 0) / targetB : 1;
-          if (ratioA !== ratioB) return ratioA - ratioB;
-
-          return (lastWeekPlayed[a.id] || 0) - (lastWeekPlayed[b.id] || 0);
-        });
-
-        const matchPlayers = candidates.slice(0, 2);
-        if (matchPlayers.length > 0) {
-          matchPlayers.forEach((p) => {
-            singlesCount[p.id] = (singlesCount[p.id] || 0) + 1;
-            lastWeekPlayed[p.id] = w;
-            dayScheduledSet.add(p.id);
-          });
-
-          generatedMatches.push({
-            week_number: w,
-            day_of_week: dayName,
-            match_date: matchDate,
-            type: 'SINGLES',
-            court_number: c,
-            slots: matchPlayers.map((p) => ({
-              player_id: p.id,
-              player_name: p.full_name,
-            })),
-          });
+      for (let c = 1; c <= courtsCount; c++) {
+        // Fallback logic for court numbers
+        let assignedCourtNum = c;
+        if (dayConfig.courtNumbers && dayConfig.courtNumbers[c - 1] !== undefined) {
+          assignedCourtNum = Number(dayConfig.courtNumbers[c - 1]);
+        } else if (dayConfig.singlesCourtNumbers && c <= dayConfig.singlesCourts!) {
+          assignedCourtNum = Number(dayConfig.singlesCourtNumbers[c - 1]);
+        } else if (dayConfig.doublesCourtNumbers && c - dayConfig.singlesCourts! > 0) {
+          assignedCourtNum = Number(dayConfig.doublesCourtNumbers[c - 1 - dayConfig.singlesCourts!]);
         }
-      }
+        
+        // Dynamically decide Match Type for this court based on season allocation
+        const expectedSingles = ((scheduledSinglesMatches + scheduledDoublesMatches + 1) / totalCapacityMatches) * allocatedSingles;
+        let matchType: 'SINGLES' | 'DOUBLES' = 'DOUBLES';
+        
+        // if we are behind on singles allocation, schedule singles, else doubles
+        if (scheduledSinglesMatches < expectedSingles) {
+          matchType = 'SINGLES';
+        }
 
-      // 2. Process Doubles Courts for this day
-      for (let c = 1; c <= dayConfig.doublesCourts; c++) {
-        const courtNum = dayConfig.singlesCourts + c;
-        const eligibleDoubles = dayAvailablePlayers.filter(
-          (p) => Number(p.doubles_share || 0) > 0 && !dayScheduledSet.has(p.id)
+        const isSingles = matchType === 'SINGLES';
+        const numPlayersNeeded = isSingles ? 2 : 4;
+        const relevantCount = isSingles ? singlesCount : doublesCount;
+        
+        const eligiblePlayers = dayAvailablePlayers.filter(
+          (p) => Number(isSingles ? p.singles_share : p.doubles_share) > 0 && !dayScheduledSet.has(p.id)
         );
 
-        const candidates = [...eligibleDoubles].sort((a, b) => {
-          const targetA = Math.round(a.doubles_share * numWeeks);
-          const targetB = Math.round(b.doubles_share * numWeeks);
-          const remA = targetA - doublesCount[a.id];
-          const remB = targetB - doublesCount[b.id];
+        const candidates = [...eligiblePlayers].sort((a, b) => {
+          const targetA = Math.round((isSingles ? a.singles_share : a.doubles_share) * numWeeks);
+          const targetB = Math.round((isSingles ? b.singles_share : b.doubles_share) * numWeeks);
+          const remA = targetA - relevantCount[a.id];
+          const remB = targetB - relevantCount[b.id];
 
           const hasQuotaA = remA > 0 ? 1 : 0;
           const hasQuotaB = remB > 0 ? 1 : 0;
           if (hasQuotaA !== hasQuotaB) return hasQuotaB - hasQuotaA;
 
-          const ratioA = targetA > 0 ? (doublesCount[a.id] || 0) / targetA : 1;
-          const ratioB = targetB > 0 ? (doublesCount[b.id] || 0) / targetB : 1;
-          if (ratioA !== ratioB) return ratioA - ratioB;
+          // Option B: Quota Compression - Calculate "Urgency"
+          // Urgency = Remaining Matches / Remaining Available Weeks
+          let remWeeksA = 0;
+          for (let i = w; i <= numWeeks; i++) {
+             if (!a.blackout_weeks?.includes(i)) remWeeksA++;
+          }
+          let remWeeksB = 0;
+          for (let i = w; i <= numWeeks; i++) {
+             if (!b.blackout_weeks?.includes(i)) remWeeksB++;
+          }
+          
+          const urgencyA = remWeeksA > 0 ? remA / remWeeksA : 0;
+          const urgencyB = remWeeksB > 0 ? remB / remWeeksB : 0;
 
+          // Prioritize higher urgency
+          if (Math.abs(urgencyA - urgencyB) > 0.001) return urgencyB - urgencyA;
+
+          // Fallback 1: Ratio of played to target (lower ratio gets priority)
+          const ratioA = targetA > 0 ? (relevantCount[a.id] || 0) / targetA : 1;
+          const ratioB = targetB > 0 ? (relevantCount[b.id] || 0) / targetB : 1;
+          if (Math.abs(ratioA - ratioB) > 0.001) return ratioA - ratioB;
+
+          // Fallback 2: Least recently played
           return (lastWeekPlayed[a.id] || 0) - (lastWeekPlayed[b.id] || 0);
         });
 
-        const matchPlayers = candidates.slice(0, 4);
+        const matchPlayers = candidates.slice(0, numPlayersNeeded);
         if (matchPlayers.length > 0) {
           matchPlayers.forEach((p) => {
-            doublesCount[p.id] = (doublesCount[p.id] || 0) + 1;
+            relevantCount[p.id] = (relevantCount[p.id] || 0) + 1;
             lastWeekPlayed[p.id] = w;
             dayScheduledSet.add(p.id);
           });
+          
+          if (isSingles) scheduledSinglesMatches++;
+          else scheduledDoublesMatches++;
 
           generatedMatches.push({
             week_number: w,
             day_of_week: dayName,
             match_date: matchDate,
-            type: 'DOUBLES',
-            court_number: courtNum,
+            type: matchType,
+            court_number: assignedCourtNum,
             slots: matchPlayers.map((p) => ({
               player_id: p.id,
               player_name: p.full_name,

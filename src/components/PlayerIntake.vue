@@ -149,6 +149,26 @@ const cancelEdit = () => {
 
 onMounted(loadRoster);
 
+// Sort registered players: 0 total shares last, then alphabetical by last name
+const sortedRegisteredPlayers = computed(() => {
+  return [...registeredPlayers.value].sort((a, b) => {
+    const totalSharesA = Number(a.singles_share || 0) + Number(a.doubles_share || 0);
+    const totalSharesB = Number(b.singles_share || 0) + Number(b.doubles_share || 0);
+
+    // 0 total matches goes at the very end
+    if (totalSharesA === 0 && totalSharesB !== 0) return 1;
+    if (totalSharesB === 0 && totalSharesA !== 0) return -1;
+
+    // Alphabetical by last name (fallback to first name if no last name)
+    const lastNameA = getLastName(a.full_name).toLowerCase() || a.full_name.toLowerCase();
+    const lastNameB = getLastName(b.full_name).toLowerCase() || b.full_name.toLowerCase();
+
+    if (lastNameA < lastNameB) return -1;
+    if (lastNameA > lastNameB) return 1;
+    return 0;
+  });
+});
+
 // Active players with share > 0%
 const activeRegisteredPlayers = computed(() =>
   registeredPlayers.value.filter(
@@ -492,7 +512,7 @@ const handleRegister = async () => {
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
-          <tr v-for="p in registeredPlayers" :key="p.id" :class="editingPlayerId === p.id ? 'bg-amber-50/60 font-medium' : ''">
+          <tr v-for="p in sortedRegisteredPlayers" :key="p.id" :class="editingPlayerId === p.id ? 'bg-amber-50/60 font-medium' : ''">
             <td class="py-2.5 px-2 font-semibold text-slate-800 align-top">
               <div class="leading-tight">
                 <div class="text-slate-900 font-bold">{{ getFirstName(p.full_name) }}</div>

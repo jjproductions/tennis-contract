@@ -204,6 +204,7 @@ export interface ScheduleContext {
   getMatchesForPlayerInWeek(playerId: string, week: number): GeneratedMatch[];
   getMatchesForPlayerOnDay(playerId: string, week: number, day: string): GeneratedMatch[];
   didPlayersPlaySinglesThisWeek(playerA: string, playerB: string, week: number): boolean;
+  getHistoricalMatchupsCount(playerA: string, playerB: string, upToWeek: number): number;
   singlesCount: Record<string, number>;
   doublesCount: Record<string, number>;
   lastWeekPlayed: Record<string, number>;
@@ -306,6 +307,20 @@ const restScorer: SchedulingScorer = (player, ctx, sched) => {
   return weeksSincePlayed * 2; 
 };
 
+const opponentFatigueScorer: SchedulingScorer = (player, ctx, sched) => {
+  let penalty = 0;
+  for (const oppId of ctx.playersAlreadyAssigned) {
+    const timesPlayed = sched.getHistoricalMatchupsCount(player.id, oppId, ctx.week);
+    // Deduct 50 points for every time they've already shared a court this season
+    penalty -= (timesPlayed * 50); 
+  }
+  return penalty;
+};
+
+const randomTiebreakerScorer: SchedulingScorer = () => {
+  // A tiny random decimal to shuffle players with identical urgency scores
+  return Math.random(); 
+};
 
 // --- MAIN SCHEDULER ALGORITHM ---
 
@@ -372,6 +387,10 @@ export function generateSeasonSchedule(
     didPlayersPlaySinglesThisWeek(playerA, playerB, week) {
       const matches = this.getMatchesForPlayerInWeek(playerA, week);
       return matches.some(m => m.type === 'SINGLES' && m.slots.some(s => s.player_id === playerB));
+    },
+    getHistoricalMatchupsCount(playerA, playerB, upToWeek) {
+      const matchesA = generatedMatches.filter(m => m.week_number < upToWeek && m.slots.some(s => s.player_id === playerA));
+      return matchesA.filter(m => m.slots.some(s => s.player_id === playerB)).length;
     }
   };
 
@@ -393,7 +412,9 @@ export function generateSeasonSchedule(
 
   const activeScorers: SchedulingScorer[] = [
     urgencyScorer,
-    restScorer
+    restScorer,
+    opponentFatigueScorer,
+    randomTiebreakerScorer
   ];
 
   // Calculate season-long demand and capacity for court type balancing

@@ -94,6 +94,11 @@ const shareOptions = [
   { label: '3/4 Share - 75% (18 matches)', value: 0.75 },
   { label: '7/8 Share - 87.5% (21 matches)', value: 0.875 },
   { label: 'Full Share - 100% (24 matches)', value: 1.0 },
+  { label: '1 1/8 Share - 112.5% (27 matches)', value: 1.125 },
+  { label: '1 1/4 Share - 125% (30 matches)', value: 1.25 },
+  { label: '1 1/2 Share - 150% (36 matches)', value: 1.5 },
+  { label: '1 3/4 Share - 175% (42 matches)', value: 1.75 },
+  { label: 'Double Share - 200% (48 matches)', value: 2.0 },
 ];
 
 const loadRoster = async () => {
@@ -148,6 +153,26 @@ const cancelEdit = () => {
 };
 
 onMounted(loadRoster);
+
+// Sort registered players: 0 total shares last, then alphabetical by last name
+const sortedRegisteredPlayers = computed(() => {
+  return [...registeredPlayers.value].sort((a, b) => {
+    const totalSharesA = Number(a.singles_share || 0) + Number(a.doubles_share || 0);
+    const totalSharesB = Number(b.singles_share || 0) + Number(b.doubles_share || 0);
+
+    // 0 total matches goes at the very end
+    if (totalSharesA === 0 && totalSharesB !== 0) return 1;
+    if (totalSharesB === 0 && totalSharesA !== 0) return -1;
+
+    // Alphabetical by last name (fallback to first name if no last name)
+    const lastNameA = getLastName(a.full_name).toLowerCase() || a.full_name.toLowerCase();
+    const lastNameB = getLastName(b.full_name).toLowerCase() || b.full_name.toLowerCase();
+
+    if (lastNameA < lastNameB) return -1;
+    if (lastNameA > lastNameB) return 1;
+    return 0;
+  });
+});
 
 // Active players with share > 0%
 const activeRegisteredPlayers = computed(() =>
@@ -492,7 +517,7 @@ const handleRegister = async () => {
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
-          <tr v-for="p in registeredPlayers" :key="p.id" :class="editingPlayerId === p.id ? 'bg-amber-50/60 font-medium' : ''">
+          <tr v-for="p in sortedRegisteredPlayers" :key="p.id" :class="editingPlayerId === p.id ? 'bg-amber-50/60 font-medium' : ''">
             <td class="py-2.5 px-2 font-semibold text-slate-800 align-top">
               <div class="leading-tight">
                 <div class="text-slate-900 font-bold">{{ getFirstName(p.full_name) }}</div>

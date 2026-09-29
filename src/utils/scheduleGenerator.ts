@@ -187,6 +187,128 @@ export function calculateCourtsFromShares(
   };
 }
 
+
+// --- RULES & PRIORITIES ENGINE TYPES ---
+
+export interface MatchContext {
+  week: number;
+  day: string;
+  date: string;
+  type: 'SINGLES' | 'DOUBLES';
+  courtNum: number;
+  playersAlreadyAssigned: string[]; // Player IDs already drafted onto this specific court
+}
+
+export interface ScheduleContext {
+  numWeeks: number;
+  getMatchesForPlayerInWeek(playerId: string, week: number): GeneratedMatch[];
+  getMatchesForPlayerOnDay(playerId: string, week: number, day: string): GeneratedMatch[];
+  didPlayersPlaySinglesThisWeek(playerA: string, playerB: string, week: number): boolean;
+  singlesCount: Record<string, number>;
+  doublesCount: Record<string, number>;
+  lastWeekPlayed: Record<string, number>;
+}
+
+// A Rule determines if a player CAN play. Returns allowed: false if rejected. 
+// penaltyScore applies soft limits (higher = worse for player).
+export type SchedulingRule = (
+  player: PlayerForScheduling,
+  matchContext: MatchContext,
+  scheduleCtx: ScheduleContext
+) => { allowed: boolean; penaltyScore: number };
+
+// A Scorer evaluates how badly a player needs to play (higher = they get priority).
+export type SchedulingScorer = (
+  player: PlayerForScheduling,
+  matchContext: MatchContext,
+  scheduleCtx: ScheduleContext
+) => number;
+
+
+// --- RULES IMPLEMENTATIONS ---
+
+const shareRequirementRule: SchedulingRule = (player, ctx) => {
+  const share = ctx.type === 'SINGLES' ? player.singles_share : player.doubles_share;
+  if (Number(share || 0) <= 0) return { allowed: false, penaltyScore: 0 };
+  return { allowed: true, penaltyScore: 0 };
+};
+
+const blackoutRule: SchedulingRule = (player, ctx) => {
+  if (player.blackout_weeks?.includes(ctx.week)) return { allowed: false, penaltyScore: 0 };
+  if (player.blackout_days?.includes(ctx.day)) return { allowed: false, penaltyScore: 0 };
+  return { allowed: true, penaltyScore: 0 };
+};
+
+const dailyLimitRule: SchedulingRule = (player, ctx, sched) => {
+  const matchesToday = sched.getMatchesForPlayerOnDay(player.id, ctx.week, ctx.day);
+  if (matchesToday.length >= 1) return { allowed: false, penaltyScore: 0 };
+  return { allowed: true, penaltyScore: 0 };
+};
+
+const maxWeeklyMatchesRule: SchedulingRule = (player, ctx, sched) => {
+  const matchesThisWeek = sched.getMatchesForPlayerInWeek(player.id, ctx.week);
+  if (matchesThisWeek.length >= 2) return { allowed: false, penaltyScore: 0 };
+  return { allowed: true, penaltyScore: 0 };
+};
+
+const softLimitSinglesWeeklyRule: SchedulingRule = (player, ctx, sched) => {
+  if (ctx.type !== 'SINGLES') return { allowed: true, penaltyScore: 0 };
+  
+  const matchesThisWeek = sched.getMatchesForPlayerInWeek(player.id, ctx.week);
+  const singlesThisWeek = matchesThisWeek.filter(m => m.type === 'SINGLES');
+  
+  // They are allowed to play a 2nd singles match, but they receive a massive penalty 
+  // so the algorithm will pick almost ANYONE else first. It prevents empty courts.
+  if (singlesThisWeek.length >= 1) {
+    return { allowed: true, penaltyScore: 10000 };
+  }
+  return { allowed: true, penaltyScore: 0 };
+};
+
+const uniqueSinglesMatchupRule: SchedulingRule = (player, ctx, sched) => {
+  if (ctx.type !== 'SINGLES') return { allowed: true, penaltyScore: 0 };
+  
+  // Ensure this player hasn't already played the assigned opponent(s) in Singles this week
+  for (const oppId of ctx.playersAlreadyAssigned) {
+    if (sched.didPlayersPlaySinglesThisWeek(player.id, oppId, ctx.week)) {
+      return { allowed: false, penaltyScore: 0 };
+    }
+  }
+  return { allowed: true, penaltyScore: 0 };
+};
+
+
+// --- SCORERS IMPLEMENTATIONS ---
+
+const urgencyScorer: SchedulingScorer = (player, ctx, sched) => {
+  const isSingles = ctx.type === 'SINGLES';
+  const target = Math.round((isSingles ? player.singles_share : player.doubles_share) * sched.numWeeks);
+  const played = isSingles ? (sched.singlesCount[player.id] || 0) : (sched.doublesCount[player.id] || 0);
+  const remainingMatches = target - played;
+  
+  // If they have passed their target quota, very low priority (negative score)
+  if (remainingMatches <= 0) return -5000 + remainingMatches; 
+  
+  let remWeeks = 0;
+  for (let i = ctx.week; i <= sched.numWeeks; i++) {
+     if (!player.blackout_weeks?.includes(i)) remWeeks++;
+  }
+  
+  // Urgency = Matches Needed / Time Left to get them
+  const urgency = remWeeks > 0 ? remainingMatches / remWeeks : remainingMatches;
+  return urgency * 100; // Scale up for easier math comparison
+};
+
+const restScorer: SchedulingScorer = (player, ctx, sched) => {
+  const lastPlayed = sched.lastWeekPlayed[player.id] || 0;
+  const weeksSincePlayed = ctx.week - lastPlayed;
+  // Small bonus for having not played recently (e.g. +2 points per week resting)
+  return weeksSincePlayed * 2; 
+};
+
+
+// --- MAIN SCHEDULER ALGORITHM ---
+
 export function generateSeasonSchedule(
   players: PlayerForScheduling[],
   options: ScheduleGenOptions
@@ -233,18 +355,48 @@ export function generateSeasonSchedule(
     }
   });
 
-  // Track player match counts
-  const singlesCount: Record<string, number> = {};
-  const doublesCount: Record<string, number> = {};
-  const lastWeekPlayed: Record<string, number> = {};
+  const generatedMatches: GeneratedMatch[] = [];
+
+  // Initialize the Schedule Context for the rules engine to query
+  const scheduleCtx: ScheduleContext = {
+    numWeeks,
+    singlesCount: {},
+    doublesCount: {},
+    lastWeekPlayed: {},
+    getMatchesForPlayerInWeek(playerId, week) {
+      return generatedMatches.filter(m => m.week_number === week && m.slots.some(s => s.player_id === playerId));
+    },
+    getMatchesForPlayerOnDay(playerId, week, day) {
+      return generatedMatches.filter(m => m.week_number === week && m.day_of_week === day && m.slots.some(s => s.player_id === playerId));
+    },
+    didPlayersPlaySinglesThisWeek(playerA, playerB, week) {
+      const matches = this.getMatchesForPlayerInWeek(playerA, week);
+      return matches.some(m => m.type === 'SINGLES' && m.slots.some(s => s.player_id === playerB));
+    }
+  };
 
   players.forEach((p) => {
-    singlesCount[p.id] = 0;
-    doublesCount[p.id] = 0;
-    lastWeekPlayed[p.id] = -5;
+    scheduleCtx.singlesCount[p.id] = 0;
+    scheduleCtx.doublesCount[p.id] = 0;
+    scheduleCtx.lastWeekPlayed[p.id] = -5; // Default far in past
   });
 
-  // Calculate season-long demand and capacity
+  // Activate our modular rules and scorers
+  const activeRules: SchedulingRule[] = [
+    shareRequirementRule,
+    blackoutRule,
+    dailyLimitRule,
+    maxWeeklyMatchesRule,
+    softLimitSinglesWeeklyRule,
+    uniqueSinglesMatchupRule
+  ];
+
+  const activeScorers: SchedulingScorer[] = [
+    urgencyScorer,
+    restScorer
+  ];
+
+  // Calculate season-long demand and capacity for court type balancing
   const totalSinglesShares = players.reduce((acc, p) => acc + Number(p.singles_share || 0), 0);
   const totalDoublesShares = players.reduce((acc, p) => acc + Number(p.doubles_share || 0), 0);
   
@@ -263,27 +415,11 @@ export function generateSeasonSchedule(
   
   let scheduledSinglesMatches = 0;
   let scheduledDoublesMatches = 0;
-  const generatedMatches: GeneratedMatch[] = [];
 
   for (let w = 1; w <= numWeeks; w++) {
-    const availablePlayers = players.filter(
-      (p) => !p.blackout_weeks || !p.blackout_weeks.includes(w)
-    );
-
-    const scheduledTodayByDay: Record<string, Set<string>> = {};
-
     activeDailySchedule.forEach((dayConfig) => {
       const dayName = dayConfig.dayOfWeek;
-      if (!scheduledTodayByDay[dayName]) {
-        scheduledTodayByDay[dayName] = new Set<string>();
-      }
-      const dayScheduledSet = scheduledTodayByDay[dayName];
       const matchDate = validDatesPerDay[dayName][w - 1];
-
-      const dayAvailablePlayers = availablePlayers.filter(
-        (p) => !p.blackout_days || !p.blackout_days.includes(dayName)
-      );
-
       const courtsCount = dayConfig.totalCourts ?? (dayConfig.singlesCourts! + dayConfig.doublesCourts!);
 
       for (let c = 1; c <= courtsCount; c++) {
@@ -301,61 +437,70 @@ export function generateSeasonSchedule(
         const expectedSingles = ((scheduledSinglesMatches + scheduledDoublesMatches + 1) / totalCapacityMatches) * allocatedSingles;
         let matchType: 'SINGLES' | 'DOUBLES' = 'DOUBLES';
         
-        // if we are behind on singles allocation, schedule singles, else doubles
         if (scheduledSinglesMatches < expectedSingles) {
           matchType = 'SINGLES';
         }
 
         const isSingles = matchType === 'SINGLES';
         const numPlayersNeeded = isSingles ? 2 : 4;
-        const relevantCount = isSingles ? singlesCount : doublesCount;
-        
-        const eligiblePlayers = dayAvailablePlayers.filter(
-          (p) => Number(isSingles ? p.singles_share : p.doubles_share) > 0 && !dayScheduledSet.has(p.id)
-        );
+        const matchPlayers: PlayerForScheduling[] = [];
 
-        const candidates = [...eligiblePlayers].sort((a, b) => {
-          const targetA = Math.round((isSingles ? a.singles_share : a.doubles_share) * numWeeks);
-          const targetB = Math.round((isSingles ? b.singles_share : b.doubles_share) * numWeeks);
-          const remA = targetA - relevantCount[a.id];
-          const remB = targetB - relevantCount[b.id];
-
-          const hasQuotaA = remA > 0 ? 1 : 0;
-          const hasQuotaB = remB > 0 ? 1 : 0;
-          if (hasQuotaA !== hasQuotaB) return hasQuotaB - hasQuotaA;
-
-          // Option B: Quota Compression - Calculate "Urgency"
-          // Urgency = Remaining Matches / Remaining Available Weeks
-          let remWeeksA = 0;
-          for (let i = w; i <= numWeeks; i++) {
-             if (!a.blackout_weeks?.includes(i)) remWeeksA++;
-          }
-          let remWeeksB = 0;
-          for (let i = w; i <= numWeeks; i++) {
-             if (!b.blackout_weeks?.includes(i)) remWeeksB++;
-          }
+        // Draft players one by one for this court
+        for (let pIdx = 0; pIdx < numPlayersNeeded; pIdx++) {
+          const matchCtx: MatchContext = {
+            week: w,
+            day: dayName,
+            date: matchDate,
+            type: matchType,
+            courtNum: assignedCourtNum,
+            playersAlreadyAssigned: matchPlayers.map(p => p.id)
+          };
           
-          const urgencyA = remWeeksA > 0 ? remA / remWeeksA : 0;
-          const urgencyB = remWeeksB > 0 ? remB / remWeeksB : 0;
+          let candidates = players.map(player => {
+            // Can't pick a player who is already drafted onto this specific court
+            if (matchPlayers.some(mp => mp.id === player.id)) return null; 
+            
+            let totalPenalty = 0;
+            let isAllowed = true;
+            
+            // 1. Pass through Constraints (Rules)
+            for (const rule of activeRules) {
+              const res = rule(player, matchCtx, scheduleCtx);
+              if (!res.allowed) {
+                isAllowed = false;
+                break; // Hard rejection, stop checking rules
+              }
+              totalPenalty += res.penaltyScore;
+            }
+            
+            if (!isAllowed) return null;
+            
+            // 2. Pass through Heuristics (Scorers)
+            let totalScore = 0;
+            for (const scorer of activeScorers) {
+              totalScore += scorer(player, matchCtx, scheduleCtx);
+            }
+            
+            const finalScore = totalScore - totalPenalty;
+            return { player, score: finalScore };
+          }).filter(c => c !== null) as { player: PlayerForScheduling; score: number }[];
+          
+          if (candidates.length > 0) {
+            // Sort by highest score first
+            candidates.sort((a, b) => b.score - a.score);
+            matchPlayers.push(candidates[0].player);
+          }
+        }
 
-          // Prioritize higher urgency
-          if (Math.abs(urgencyA - urgencyB) > 0.001) return urgencyB - urgencyA;
-
-          // Fallback 1: Ratio of played to target (lower ratio gets priority)
-          const ratioA = targetA > 0 ? (relevantCount[a.id] || 0) / targetA : 1;
-          const ratioB = targetB > 0 ? (relevantCount[b.id] || 0) / targetB : 1;
-          if (Math.abs(ratioA - ratioB) > 0.001) return ratioA - ratioB;
-
-          // Fallback 2: Least recently played
-          return (lastWeekPlayed[a.id] || 0) - (lastWeekPlayed[b.id] || 0);
-        });
-
-        const matchPlayers = candidates.slice(0, numPlayersNeeded);
         if (matchPlayers.length > 0) {
+          // Update Schedule Context trackers with drafted players
           matchPlayers.forEach((p) => {
-            relevantCount[p.id] = (relevantCount[p.id] || 0) + 1;
-            lastWeekPlayed[p.id] = w;
-            dayScheduledSet.add(p.id);
+            if (isSingles) {
+              scheduleCtx.singlesCount[p.id] = (scheduleCtx.singlesCount[p.id] || 0) + 1;
+            } else {
+              scheduleCtx.doublesCount[p.id] = (scheduleCtx.doublesCount[p.id] || 0) + 1;
+            }
+            scheduleCtx.lastWeekPlayed[p.id] = w;
           });
           
           if (isSingles) scheduledSinglesMatches++;
@@ -381,9 +526,9 @@ export function generateSeasonSchedule(
     player_id: p.id,
     full_name: p.full_name,
     target_singles: Math.round(p.singles_share * numWeeks),
-    scheduled_singles: singlesCount[p.id] || 0,
+    scheduled_singles: scheduleCtx.singlesCount[p.id] || 0,
     target_doubles: Math.round(p.doubles_share * numWeeks),
-    scheduled_doubles: doublesCount[p.id] || 0,
+    scheduled_doubles: scheduleCtx.doublesCount[p.id] || 0,
     blackout_count: p.blackout_weeks?.length || 0,
   }));
 
@@ -402,4 +547,3 @@ export function generateSeasonSchedule(
     weeklyCourtsCount,
   };
 }
-

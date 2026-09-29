@@ -94,6 +94,11 @@ const shareOptions = [
   { label: '3/4 Share - 75% (18 matches)', value: 0.75 },
   { label: '7/8 Share - 87.5% (21 matches)', value: 0.875 },
   { label: 'Full Share - 100% (24 matches)', value: 1.0 },
+  { label: '1 1/8 Share - 112.5% (27 matches)', value: 1.125 },
+  { label: '1 1/4 Share - 125% (30 matches)', value: 1.25 },
+  { label: '1 1/2 Share - 150% (36 matches)', value: 1.5 },
+  { label: '1 3/4 Share - 175% (42 matches)', value: 1.75 },
+  { label: 'Double Share - 200% (48 matches)', value: 2.0 },
 ];
 
 const loadRoster = async () => {

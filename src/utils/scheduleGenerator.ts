@@ -283,35 +283,50 @@ const uniqueSinglesMatchupRule: SchedulingRule = (player, ctx, sched) => {
 
 const urgencyScorer: SchedulingScorer = (player, ctx, sched) => {
   const isSingles = ctx.type === 'SINGLES';
-  const target = Math.round((isSingles ? player.singles_share : player.doubles_share) * sched.numWeeks);
+  const share = isSingles ? player.singles_share : player.doubles_share;
+  const target = Math.round(share * sched.numWeeks);
   const played = isSingles ? (sched.singlesCount[player.id] || 0) : (sched.doublesCount[player.id] || 0);
   const remainingMatches = target - played;
   
-  // If they have passed their target quota, very low priority (negative score)
-  if (remainingMatches <= 0) return -5000 + remainingMatches; 
+  if (remainingMatches <= 0) return -500000; 
   
-  let remWeeks = 0;
-  for (let i = ctx.week; i <= sched.numWeeks; i++) {
-     if (!player.blackout_weeks?.includes(i)) remWeeks++;
+  let totalPlayableWeeks = 0;
+  let weeksPlayedSoFar = 0;
+  
+  for (let w = 1; w <= sched.numWeeks; w++) {
+    if (!player.blackout_weeks?.includes(w)) {
+      totalPlayableWeeks++;
+      if (w < ctx.week) weeksPlayedSoFar++;
+    }
   }
   
-  // Urgency = Matches Needed / Time Left to get them
-  const urgency = remWeeks > 0 ? remainingMatches / remWeeks : remainingMatches;
-  return urgency * 100; // Scale up for easier math comparison
+  if (totalPlayableWeeks === 0) return -500000;
+
+  // Expected matches they should have played by this point in the season to stay exactly on pace
+  const expectedPlayed = (target / totalPlayableWeeks) * weeksPlayedSoFar;
+  const matchesBehindPace = expectedPlayed - played;
+
+  // Group into tiers of 1 match. 
+  // If they are >1 match behind pace, they jump to Tier 1 (+10,000 pts).
+  // If they are ahead of pace, they fall to Tier -1 (-10,000 pts).
+  // Everyone on pace is Tier 0 (0 pts).
+  const paceTier = Math.floor(matchesBehindPace);
+
+  return paceTier * 10000;
 };
 
 const restScorer: SchedulingScorer = (player, ctx, sched) => {
   const lastPlayed = sched.lastWeekPlayed[player.id] || 0;
   const weeksSincePlayed = ctx.week - lastPlayed;
-  // Small bonus for having not played recently (e.g. +2 points per week resting)
-  return weeksSincePlayed * 2; 
+  // Give a moderate bonus for sitting out (acts as a sub-priority to urgency)
+  return weeksSincePlayed * 100; 
 };
 
 const opponentFatigueScorer: SchedulingScorer = (player, ctx, sched) => {
   let penalty = 0;
   for (const oppId of ctx.playersAlreadyAssigned) {
     const timesPlayed = sched.getHistoricalMatchupsCount(player.id, oppId, ctx.week);
-    // Deduct 50 points for every time they've already shared a court this season
+    // Heavy penalty for repeats, but it will only affect players in the exact same Pace Tier
     penalty -= (timesPlayed * 50); 
   }
   return penalty;
@@ -541,6 +556,82 @@ export function generateSeasonSchedule(
         }
       }
     });
+  }
+
+  // --- POST-PROCESSING QUOTA SWAP PASS ---
+  // The greedy algorithm can occasionally box itself into a corner at the end of the season.
+  // This step identifies under-allocated players and attempts to swap them into slots held by over-allocated players.
+  
+  let madeSwap = true;
+  while (madeSwap) {
+    madeSwap = false;
+    
+    for (const p of players) {
+      const targetS = Math.round(p.singles_share * numWeeks);
+      const targetD = Math.round(p.doubles_share * numWeeks);
+      
+      const isUnderSingles = scheduleCtx.singlesCount[p.id] < targetS;
+      const isUnderDoubles = scheduleCtx.doublesCount[p.id] < targetD;
+      
+      if (!isUnderSingles && !isUnderDoubles) continue;
+      
+      for (const match of generatedMatches) {
+        if (madeSwap) break;
+        
+        const isSinglesMatch = match.type === 'SINGLES';
+        if (isSinglesMatch && !isUnderSingles) continue;
+        if (!isSinglesMatch && !isUnderDoubles) continue;
+        
+        // Find if an over-allocated player is in this match
+        const overSlotIdx = match.slots.findIndex(slot => {
+           const slotPlayer = players.find(sp => sp.id === slot.player_id);
+           if (!slotPlayer) return false;
+           
+           if (isSinglesMatch) {
+             return scheduleCtx.singlesCount[slotPlayer.id] > Math.round(slotPlayer.singles_share * numWeeks);
+           } else {
+             return scheduleCtx.doublesCount[slotPlayer.id] > Math.round(slotPlayer.doubles_share * numWeeks);
+           }
+        });
+        
+        if (overSlotIdx === -1) continue; // No over-allocated player to steal from
+        if (match.slots.some(s => s.player_id === p.id)) continue; // Under-allocated player already in this match
+        
+        // Can 'p' legally take this slot?
+        const overPlayerId = match.slots[overSlotIdx].player_id;
+        
+        const matchCtx: MatchContext = {
+          week: match.week_number,
+          day: match.day_of_week,
+          date: match.match_date,
+          type: match.type,
+          courtNum: match.court_number,
+          playersAlreadyAssigned: match.slots.filter(s => s.player_id !== overPlayerId).map(s => s.player_id)
+        };
+        
+        let isAllowed = true;
+        for (const rule of activeRules) {
+           const res = rule(p, matchCtx, scheduleCtx);
+           if (!res.allowed) { isAllowed = false; break; }
+        }
+        
+        if (isAllowed) {
+          // Perform the swap
+          match.slots[overSlotIdx] = { player_id: p.id, player_name: p.full_name };
+          
+          if (isSinglesMatch) {
+            scheduleCtx.singlesCount[p.id]++;
+            scheduleCtx.singlesCount[overPlayerId]--;
+          } else {
+            scheduleCtx.doublesCount[p.id]++;
+            scheduleCtx.doublesCount[overPlayerId]--;
+          }
+          
+          madeSwap = true;
+          break;
+        }
+      }
+    }
   }
 
   const summaries: PlayerQuotaSummary[] = players.map((p) => ({

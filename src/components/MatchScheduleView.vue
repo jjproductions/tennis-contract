@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
+import { supabase } from '../supabase';
 import {
   Calendar,
   UserCheck,
@@ -15,9 +16,13 @@ import {
   FileSpreadsheet,
   FileCode,
   ChevronDown,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-vue-next';
 import { formatDayOfWeek, compareMatches } from '../utils/scheduleGenerator';
 import { exportToCSV, exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { fetchLeagueConfig, type LeagueConfiguration } from '../utils/leagueSettings';
+import { notifySubRequestedByPlayer } from '../utils/discordNotifier';
 
 export interface MatchSlotView {
   slot_id: string;
@@ -46,6 +51,14 @@ const props = defineProps<{
   allSlots: MatchSlotView[];
   activePlayerId: string | null;
   activePlayerName: string | null;
+  activePlayer?: {
+    id: string;
+    full_name: string;
+    email?: string;
+    is_admin?: boolean;
+    blackout_weeks?: number[];
+    blackout_days?: string[];
+  } | null;
   session: any;
 }>();
 
@@ -53,7 +66,206 @@ const emit = defineEmits<{
   (e: 'setSubStatus', slotId: string, status: 'OPEN_SUB' | 'CONFIRMED'): void;
   (e: 'claimSlot', slotId: string): void;
   (e: 'openAuthModal'): void;
+  (e: 'updated'): void;
 }>();
+
+// Sub Request & League Config State
+const leagueConfig = ref<LeagueConfiguration>({ sub_request_flow: 'maintenance_free' });
+const mySubRequests = ref<Record<string, string>>({}); // slot_id -> request_id
+const isSubmittingSubRequest = ref<string | null>(null);
+const subRequestToast = ref<{ text: string; error?: boolean } | null>(null);
+
+// Blackout Confirmation Modal State
+const blackoutModalOpen = ref<boolean>(false);
+const pendingTargetSlot = ref<MatchSlotView | null>(null);
+const blackoutReason = ref<string>('');
+const localPlayerProfile = ref<{
+  id: string;
+  full_name: string;
+  email?: string;
+  blackout_weeks?: number[];
+  blackout_days?: string[];
+} | null>(null);
+
+const fetchConfig = async () => {
+  leagueConfig.value = await fetchLeagueConfig();
+};
+
+const syncPlayerProfile = async () => {
+  if (props.activePlayer) {
+    localPlayerProfile.value = props.activePlayer;
+    return;
+  }
+  if (!props.activePlayerId) {
+    localPlayerProfile.value = null;
+    return;
+  }
+  const { data } = await supabase
+    .from('players')
+    .select('id, full_name, email, blackout_weeks, blackout_days')
+    .eq('id', props.activePlayerId)
+    .maybeSingle();
+  if (data) {
+    localPlayerProfile.value = data;
+  }
+};
+
+const fetchMySubRequests = async () => {
+  if (!props.activePlayerId) {
+    mySubRequests.value = {};
+    return;
+  }
+  const { data, error } = await supabase
+    .from('sub_requests')
+    .select('id, slot_id, status')
+    .eq('requesting_player_id', props.activePlayerId)
+    .eq('status', 'PENDING');
+
+  if (!error && data) {
+    const map: Record<string, string> = {};
+    for (const r of data) {
+      map[r.slot_id] = r.id;
+    }
+    mySubRequests.value = map;
+  }
+};
+
+onMounted(async () => {
+  await fetchConfig();
+  await syncPlayerProfile();
+  await fetchMySubRequests();
+});
+
+watch(
+  () => props.activePlayerId,
+  async () => {
+    await syncPlayerProfile();
+    await fetchMySubRequests();
+  }
+);
+
+watch(
+  () => props.activePlayer,
+  (newVal) => {
+    if (newVal) localPlayerProfile.value = newVal;
+  }
+);
+
+const handleStartRequest = async (slot: MatchSlotView) => {
+  if (!props.session || !props.activePlayerId) {
+    emit('openAuthModal');
+    return;
+  }
+
+  await syncPlayerProfile();
+  const profile = localPlayerProfile.value || props.activePlayer;
+
+  const playerWeeks = profile?.blackout_weeks || [];
+  const playerDays = (profile?.blackout_days || []).map((d: string) => d.toUpperCase());
+
+  const isWeekBlackout = playerWeeks.includes(slot.week_number);
+  const isDayBlackout = playerDays.includes(slot.day_of_week.toUpperCase());
+
+  if (isWeekBlackout || isDayBlackout) {
+    let reason = '';
+    if (isWeekBlackout && isDayBlackout) {
+      reason = `Week ${slot.week_number} and ${formatDayOfWeek(slot.day_of_week)}s`;
+    } else if (isWeekBlackout) {
+      reason = `Week ${slot.week_number}`;
+    } else {
+      reason = `${formatDayOfWeek(slot.day_of_week)}s`;
+    }
+    blackoutReason.value = reason;
+    pendingTargetSlot.value = slot;
+    blackoutModalOpen.value = true;
+    return;
+  }
+
+  await submitSubRequest(slot);
+};
+
+const submitSubRequest = async (slot: MatchSlotView) => {
+  if (!props.activePlayerId) return;
+  isSubmittingSubRequest.value = slot.slot_id;
+
+  const { data, error } = await supabase
+    .from('sub_requests')
+    .insert({
+      slot_id: slot.slot_id,
+      requesting_player_id: props.activePlayerId,
+      status: 'PENDING',
+    })
+    .select('id')
+    .single();
+
+  isSubmittingSubRequest.value = null;
+
+  if (error) {
+    subRequestToast.value = { text: error.message, error: true };
+    return;
+  }
+
+  mySubRequests.value[slot.slot_id] = data.id;
+  subRequestToast.value = {
+    text: `Sub request submitted for Week ${slot.week_number} (${formatDayOfWeek(slot.day_of_week)})! You will be assigned if approved or drafted.`,
+    error: false,
+  };
+
+  // Notify admin Discord
+  notifySubRequestedByPlayer(
+    {
+      full_name: props.activePlayerName || 'A League Player',
+      email: localPlayerProfile.value?.email || props.activePlayer?.email,
+    },
+    {
+      week_number: slot.week_number,
+      day_of_week: formatDayOfWeek(slot.day_of_week),
+      match_date: slot.match_date,
+      type: slot.type,
+      court_number: slot.court_number,
+      original_player_name: slot.player_name,
+    }
+  );
+
+  emit('updated');
+  setTimeout(() => {
+    subRequestToast.value = null;
+  }, 4500);
+};
+
+const handleConfirmBlackoutOverride = async () => {
+  blackoutModalOpen.value = false;
+  if (pendingTargetSlot.value) {
+    const slot = pendingTargetSlot.value;
+    pendingTargetSlot.value = null;
+    await submitSubRequest(slot);
+  }
+};
+
+const handleCancelRequest = async (slotId: string) => {
+  if (!props.activePlayerId) return;
+  isSubmittingSubRequest.value = slotId;
+
+  const { error } = await supabase
+    .from('sub_requests')
+    .delete()
+    .eq('slot_id', slotId)
+    .eq('requesting_player_id', props.activePlayerId);
+
+  isSubmittingSubRequest.value = null;
+
+  if (error) {
+    subRequestToast.value = { text: error.message, error: true };
+  } else {
+    delete mySubRequests.value[slotId];
+    subRequestToast.value = { text: 'Sub request withdrawn.', error: false };
+    emit('updated');
+  }
+
+  setTimeout(() => {
+    subRequestToast.value = null;
+  }, 3500);
+};
 
 // Filtering & Export state
 const selectedFilter = ref<'all' | 'mine' | 'sub_open'>('all');
@@ -163,6 +375,22 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
 
 <template>
   <div class="space-y-6">
+    <!-- Sub Request Toast Alert Banner -->
+    <div
+      v-if="subRequestToast"
+      class="p-3.5 rounded-xl text-xs flex items-center justify-between gap-2 shadow-xs transition"
+      :class="subRequestToast.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'"
+    >
+      <div class="flex items-center gap-2">
+        <AlertCircle v-if="subRequestToast.error" class="w-4 h-4 flex-shrink-0" />
+        <CheckCircle2 v-else class="w-4 h-4 flex-shrink-0 text-emerald-600" />
+        <span class="font-medium">{{ subRequestToast.text }}</span>
+      </div>
+      <button @click="subRequestToast = null" class="text-slate-400 hover:text-slate-600 p-0.5">
+        <X class="w-3.5 h-3.5" />
+      </button>
+    </div>
+
     <!-- Top Summary Banner & Quick Filters -->
     <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -511,12 +739,32 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
 
               <!-- If this slot is OPEN_SUB and belongs to another player -->
               <template v-else-if="slot.status === 'OPEN_SUB'">
-                <button
-                  @click="emit('claimSlot', slot.slot_id)"
-                  class="text-[11px] font-bold px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition shadow-xs"
-                >
-                  Claim Spot
-                </button>
+                <div class="flex flex-col items-end gap-1">
+                  <button
+                    v-if="mySubRequests[slot.slot_id]"
+                    @click="handleCancelRequest(slot.slot_id)"
+                    :disabled="isSubmittingSubRequest === slot.slot_id"
+                    class="text-[11px] font-bold px-3 py-1 bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-700 rounded-lg transition disabled:opacity-50"
+                  >
+                    <RefreshCw v-if="isSubmittingSubRequest === slot.slot_id" class="w-3 h-3 animate-spin inline-block mr-1" />
+                    Cancel Request
+                  </button>
+                  <button
+                    v-else
+                    @click="handleStartRequest(slot)"
+                    :disabled="isSubmittingSubRequest === slot.slot_id"
+                    class="text-[11px] font-bold px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition shadow-xs disabled:opacity-50"
+                  >
+                    <RefreshCw v-if="isSubmittingSubRequest === slot.slot_id" class="w-3 h-3 animate-spin inline-block mr-1" />
+                    Request Slot
+                  </button>
+                  <span
+                    v-if="leagueConfig.sub_request_flow === 'maintenance_free'"
+                    class="text-[10px] text-amber-700 font-medium text-right"
+                  >
+                    Slot will be auto-assigned 24 hours before the match.
+                  </span>
+                </div>
               </template>
             </div>
           </div>
@@ -614,19 +862,85 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
                     >
                       Reclaim
                     </button>
-                    <button
-                      v-else-if="slot.status === 'OPEN_SUB'"
-                      @click="emit('claimSlot', slot.slot_id)"
-                      class="text-[10px] font-bold px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded transition shadow-xs"
-                    >
-                      Claim Spot
-                    </button>
+                    <template v-else-if="slot.status === 'OPEN_SUB'">
+                      <div class="flex flex-col items-end gap-0.5">
+                        <button
+                          v-if="mySubRequests[slot.slot_id]"
+                          @click="handleCancelRequest(slot.slot_id)"
+                          :disabled="isSubmittingSubRequest === slot.slot_id"
+                          class="text-[10px] font-bold px-2 py-1 bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-700 rounded transition disabled:opacity-50"
+                        >
+                          Cancel Request
+                        </button>
+                        <button
+                          v-else
+                          @click="handleStartRequest(slot)"
+                          :disabled="isSubmittingSubRequest === slot.slot_id"
+                          class="text-[10px] font-bold px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded transition shadow-xs disabled:opacity-50"
+                        >
+                          Request Slot
+                        </button>
+                        <span
+                          v-if="leagueConfig.sub_request_flow === 'maintenance_free'"
+                          class="text-[9px] text-amber-700 text-right"
+                        >
+                          Auto-assigned 24h prior
+                        </span>
+                      </div>
+                    </template>
                   </template>
                 </div>
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Blackout Override Confirmation Modal -->
+    <div
+      v-if="blackoutModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+    >
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+        <div class="flex items-center gap-3 mb-4 text-amber-600">
+          <div class="p-3 bg-amber-100 rounded-full">
+            <AlertTriangle class="w-6 h-6 text-amber-600" />
+          </div>
+          <div>
+            <h3 class="font-bold text-base text-slate-900">Blackout Period Notice</h3>
+            <p class="text-xs text-slate-500">Confirm your availability for this slot</p>
+          </div>
+        </div>
+
+        <div class="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 space-y-1.5">
+          <p class="font-semibold">
+            You previously marked <strong>{{ blackoutReason }}</strong> as an unavailable blackout period in your registration intake.
+          </p>
+          <p class="text-slate-600">
+            Match: <span class="font-bold text-slate-800">Week {{ pendingTargetSlot?.week_number }} • {{ pendingTargetSlot ? formatDayOfWeek(pendingTargetSlot.day_of_week) : '' }}, {{ pendingTargetSlot?.match_date }} (Court {{ pendingTargetSlot?.court_number }})</span>
+          </p>
+          <p class="text-amber-800 pt-1">
+            Are you sure your schedule has opened up and you are available to play during this time?
+          </p>
+        </div>
+
+        <div class="flex justify-end gap-2.5">
+          <button
+            type="button"
+            @click="blackoutModalOpen = false; pendingTargetSlot = null;"
+            class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            @click="handleConfirmBlackoutOverride"
+            class="px-4 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition shadow-xs"
+          >
+            Yes, Request Slot
+          </button>
+        </div>
       </div>
     </div>
   </div>

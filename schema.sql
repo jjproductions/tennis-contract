@@ -73,8 +73,19 @@ CREATE TYPE "public"."slot_status" AS ENUM (
 ALTER TYPE "public"."slot_status" OWNER TO "postgres";
 
 
+CREATE TYPE "public"."sub_request_status" AS ENUM (
+    'PENDING',
+    'APPROVED',
+    'REJECTED',
+    'CANCELLED'
+);
+
+
+ALTER TYPE "public"."sub_request_status" OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."claim_sub_slot"("target_slot_id" "uuid", "claiming_player_id" "uuid") RETURNS "jsonb"
-    LANGUAGE "plpgsql"
+    LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 DECLARE
     v_match_id UUID;
@@ -114,6 +125,7 @@ BEGIN
     -- Update Slot
     UPDATE match_slots
     SET player_id = claiming_player_id,
+        original_player_id = COALESCE(original_player_id, v_current_player_id),
         status = 'CONFIRMED',
         updated_at = NOW()
     WHERE id = target_slot_id;
@@ -128,6 +140,83 @@ $$;
 
 
 ALTER FUNCTION "public"."claim_sub_slot"("target_slot_id" "uuid", "claiming_player_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."approve_sub_request"("request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+    v_slot_id uuid;
+    v_player_id uuid;
+    v_result jsonb;
+BEGIN
+    SELECT slot_id, requesting_player_id INTO v_slot_id, v_player_id 
+    FROM sub_requests WHERE id = request_id AND status = 'PENDING';
+    
+    IF NOT FOUND THEN 
+        RETURN jsonb_build_object('success', false, 'message', 'Request not found or already processed'); 
+    END IF;
+
+    v_result := claim_sub_slot(v_slot_id, v_player_id);
+
+    IF (v_result->>'success')::boolean = true THEN
+        UPDATE sub_requests SET status = 'APPROVED' WHERE id = request_id;
+        UPDATE sub_requests SET status = 'REJECTED' WHERE slot_id = v_slot_id AND status = 'PENDING';
+    END IF;
+
+    RETURN v_result;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."approve_sub_request"("request_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."process_auto_draft"() RETURNS jsonb
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+    v_flow text;
+    v_slot RECORD;
+    v_best_request RECORD;
+    v_assigned_count int := 0;
+BEGIN
+    -- Check league configuration setting (defaults to maintenance_free if unset)
+    SELECT (value->>'sub_request_flow') INTO v_flow 
+    FROM league_settings WHERE key = 'league_configuration';
+    
+    IF v_flow IS NOT NULL AND v_flow = 'admin_assists' THEN
+        RETURN jsonb_build_object('success', false, 'message', 'League is configured for Admin Assists mode. Auto-draft skipped.', 'assigned', 0);
+    END IF;
+
+    -- Find OPEN_SUB slots that are scheduled within the next 24 hours (or match_date <= CURRENT_DATE + INTERVAL '1 day')
+    FOR v_slot IN 
+        SELECT DISTINCT ms.id AS slot_id
+        FROM match_slots ms
+        JOIN matches m ON ms.match_id = m.id
+        WHERE ms.status = 'OPEN_SUB'
+          AND m.match_date <= (CURRENT_DATE + INTERVAL '1 day')
+    LOOP
+        -- Find the highest-ranked eligible request for this slot
+        SELECT request_id INTO v_best_request
+        FROM sub_request_rankings
+        WHERE slot_id = v_slot.slot_id
+          AND rule_penalty = 0
+        ORDER BY times_subbed ASC, requested_at ASC
+        LIMIT 1;
+
+        IF FOUND THEN
+            PERFORM approve_sub_request(v_best_request.request_id);
+            v_assigned_count := v_assigned_count + 1;
+        END IF;
+    END LOOP;
+
+    RETURN jsonb_build_object('success', true, 'message', format('Processed auto-draft. Assigned %s slot(s).', v_assigned_count), 'assigned', v_assigned_count);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."process_auto_draft"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."direct_swap_slots"("slot_id_a" "uuid", "slot_id_b" "uuid") RETURNS "jsonb"
@@ -273,6 +362,63 @@ CREATE TABLE IF NOT EXISTS "public"."swap_logs" (
 ALTER TABLE "public"."swap_logs" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."sub_requests" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL PRIMARY KEY,
+    "slot_id" "uuid" NOT NULL REFERENCES "public"."match_slots"("id") ON DELETE CASCADE,
+    "requesting_player_id" "uuid" NOT NULL REFERENCES "public"."players"("id") ON DELETE CASCADE,
+    "status" "public"."sub_request_status" DEFAULT 'PENDING'::"public"."sub_request_status" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "sub_requests_slot_player_unique" UNIQUE ("slot_id", "requesting_player_id")
+);
+
+
+ALTER TABLE "public"."sub_requests" OWNER TO "postgres";
+
+
+CREATE OR REPLACE VIEW "public"."sub_request_rankings" AS
+SELECT 
+    sr.id AS request_id,
+    sr.slot_id,
+    sr.requesting_player_id,
+    p.full_name,
+    p.email,
+    (
+        SELECT COUNT(*) FROM match_slots ms 
+        WHERE ms.player_id = p.id AND ms.original_player_id IS NOT NULL
+    ) AS times_subbed,
+    -- 0 means eligible. Negative numbers mean ineligible due to a specific rule.
+    CASE 
+        -- Rule 1: Max 1 match per day
+        WHEN (
+            SELECT COUNT(*) FROM match_slots ms2 JOIN matches m2 ON ms2.match_id = m2.id
+            WHERE ms2.player_id = p.id AND m2.match_date = m_target.match_date
+        ) > 0 THEN -1
+        -- Rule 2: Max 2 matches per week
+        WHEN (
+            SELECT COUNT(*) FROM match_slots ms2 JOIN matches m2 ON ms2.match_id = m2.id
+            WHERE ms2.player_id = p.id AND m2.week_number = m_target.week_number
+        ) >= 2 THEN -2
+        ELSE 0 
+    END AS rule_penalty,
+    m_target.id AS match_id,
+    m_target.match_date,
+    m_target.week_number,
+    m_target.day_of_week,
+    m_target.type,
+    m_target.court_number,
+    orig_p.full_name AS original_player_name,
+    sr.created_at AS requested_at
+FROM sub_requests sr
+JOIN players p ON sr.requesting_player_id = p.id
+JOIN match_slots ms_target ON sr.slot_id = ms_target.id
+JOIN matches m_target ON ms_target.match_id = m_target.id
+LEFT JOIN players orig_p ON orig_p.id = COALESCE(ms_target.original_player_id, ms_target.player_id)
+WHERE sr.status = 'PENDING';
+
+
+ALTER VIEW "public"."sub_request_rankings" OWNER TO "postgres";
+
+
 ALTER TABLE ONLY "public"."league_settings"
     ADD CONSTRAINT "league_settings_pkey" PRIMARY KEY ("key");
 
@@ -414,6 +560,22 @@ CREATE POLICY "Allow update matches" ON "public"."matches" FOR UPDATE TO "authen
 
 
 
+CREATE POLICY "Allow public read access to sub_requests" ON "public"."sub_requests" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Allow public insert access to sub_requests" ON "public"."sub_requests" FOR INSERT TO "authenticated", "anon" WITH CHECK (true);
+
+
+
+CREATE POLICY "Allow public update access to sub_requests" ON "public"."sub_requests" FOR UPDATE TO "authenticated", "anon" USING (true) WITH CHECK (true);
+
+
+
+CREATE POLICY "Allow public delete access to sub_requests" ON "public"."sub_requests" FOR DELETE TO "authenticated", "anon" USING (true);
+
+
+
 ALTER TABLE "public"."league_settings" ENABLE ROW LEVEL SECURITY;
 
 
@@ -427,6 +589,9 @@ ALTER TABLE "public"."players" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."swap_logs" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."sub_requests" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -654,6 +819,18 @@ GRANT ALL ON TABLE "public"."registration_totals" TO "service_role";
 GRANT ALL ON TABLE "public"."swap_logs" TO "anon";
 GRANT ALL ON TABLE "public"."swap_logs" TO "authenticated";
 GRANT ALL ON TABLE "public"."swap_logs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."sub_requests" TO "anon";
+GRANT ALL ON TABLE "public"."sub_requests" TO "authenticated";
+GRANT ALL ON TABLE "public"."sub_requests" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."sub_request_rankings" TO "anon";
+GRANT ALL ON TABLE "public"."sub_request_rankings" TO "authenticated";
+GRANT ALL ON TABLE "public"."sub_request_rankings" TO "service_role";
 
 
 

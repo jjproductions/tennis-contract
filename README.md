@@ -20,23 +20,34 @@ A self-service portal built for indoor winter tennis contract leagues. Designed 
 - **Blackout Constraint Engine**: Respects individual player blackout days and blackout weeks when assigning court slots.
 - **Fair Rotation**: Balances singles/doubles match distributions and partner/opponent rotation across courts.
 
-### 🔄 Match Schedule & Sub/Swap Management
-- **Interactive Season Schedule**: View weekly match assignments, court times, and player pairings.
-- **Sub & Swap Request System**:
-  - Flag matches when unable to play to open up substitute requests for other league members.
-  - Claim open sub slots with instant roster status updates.
+### 🔄 Match Schedule & Sub Request Management
+- **Interactive Season Schedule**: View weekly match assignments, court times, and player pairings in either Card view or Compact Table view.
+- **Dual Sub Request Flows** (Configured via Admin League Settings):
+  - 🤖 **Maintenance Free (Auto-Draft - Default)**: Players request open sub slots through the schedule. 24 hours prior to each match, an automated drafting engine evaluates all candidate requests and assigns the slot to the highest-ranked eligible player (fewest season substitutions, strictly honoring max 1 match/day and max 2 matches/week limits). Eliminates first-come-first-serve racing.
+  - 🛡️ **Admin Assists (Manual Approval)**: Players submit sub requests. All requests are aggregated and ranked algorithmically in the Admin Pending Requests panel. The administrator reviews candidate rankings and clicks **Approve Sub** to select the winning player.
+- **Algorithmic Sub Ranking Engine (`sub_request_rankings`)**:
+  - Automatically ranks candidates by fewest previous substitutions (`times_subbed`).
+  - Flags rule conflicts (`rule_penalty = -1` for same-day conflict, `rule_penalty = -2` for exceeding 2 matches/week).
+  - Highlights top candidate with `[⭐ Recommended: Fewest Subs]`.
+- **Blackout Override Confirmation**: If a player requests a sub slot on a date matching their previously configured blackout day or week, an interactive dialog confirms their availability before submitting.
+- **Self-Service Request & Cancellation**: Players can request open slots with one click and cancel/withdraw their request anytime before approval.
 - **PDF & CSV Export**: Export the full season schedule to PDF, Excel, or CSV with code-split lazy loading for instant page loads.
 
 ### 🛡️ Admin Control Panel
-- **Pending Approvals**: Review and approve new player registrations before granting access.
+- **Pending Approvals Hub**:
+  - **Sub Slot Requests**: Grouped by match fixture with candidate sub rankings, rule violation warnings, and one-click approvals.
+  - **Player Registrations**: Review and approve new intake applicants before granting access.
+- **League Settings**:
+  - Switch between **Maintenance Free (Auto-Draft)** and **Admin Assists (Manual Approval)** modes.
+  - **Manual Auto-Draft Engine Trigger**: Manually execute a draft run for testing or immediate assignment with instant status feedback.
 - **Roster Management**: Manage player roles (Admin vs Player), edit share allocations, or adjust blackout preferences.
 - **Schedule Publication**: Trigger new schedule generation, preview court distribution, and publish updates to the league.
 
 ### 📣 Secure Discord Webhook Integration (via Cloudflare Workers & KV)
 - **Zero Client-Side Secret Exposure**: Webhook URLs are hidden in Cloudflare KV; client bundles never leak Discord tokens.
 - **Multi-Channel Targeted Routing**:
-  - 📝 **Admin Channel**: New player intake registrations (alerts managers to review applicants).
-  - 📢 **Public Channel**: Player approvals, season schedule releases, open sub alerts, sub claims, and custom broadcasts.
+  - 📝 **Admin Channel**: New player intake registrations and sub-request submissions (alerts managers to review candidate requests).
+  - 📢 **Public Channel**: Player approvals, season schedule releases, open sub alerts, sub claims/assignments, and custom broadcasts.
 - **Built-in Security & Anti-Spam Guardrails**:
   - **Same-Origin Enforcement**: Rejects cross-origin requests from outside sites (`sec-fetch-site` verification).
   - **IP Rate Limiting**: Max 8 requests per 60 seconds per IP to prevent spamming.
@@ -126,11 +137,15 @@ npx wrangler kv key put --binding=DISCORD_WEBHOOKS --env staging "tennis:winter-
 
 ## 🗄️ Database Setup
 
-Run the migrations in `supabase/migrations/` on your Supabase Postgres database. The primary tables include:
+Run the migrations in `supabase/migrations/` on your Supabase Postgres database. The primary tables, views, and functions include:
 - `players`: Stores player profiles, email, `singles_share`, `doubles_share`, `blackout_days`, `blackout_weeks`, and `approved` status.
 - `matches`: Stores the weekly schedule metadata (week number, day, date, court number, match type).
-- `match_slots`: Stores individual player assignments per match, original player assignments, and `OPEN_SUB` status.
-- `league_settings`: Stores league configuration settings and notification toggles.
+- `match_slots`: Stores individual player assignments per match, `original_player_id` assignments, and `OPEN_SUB` status.
+- `sub_requests`: Stores player requests for open sub slots (`slot_id`, `requesting_player_id`, `status` [PENDING, APPROVED, REJECTED, CANCELLED]).
+- `sub_request_rankings`: SQL view evaluating pending sub requests, calculating seasonal substitution count (`times_subbed`), and checking rule penalties (`rule_penalty`).
+- `league_settings`: Stores global app configuration (`league_configuration`, `discord_settings`, `schedule_settings`).
+- `approve_sub_request(request_id)`: Atomic RPC to assign the winning candidate to a slot and reject competing requests.
+- `process_auto_draft()`: Stored procedure executed on a recurring schedule (or via Admin panel) to auto-assign slots <24 hours away to the highest-ranked eligible player when in Maintenance Free mode.
 
 ---
 

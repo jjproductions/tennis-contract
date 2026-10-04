@@ -441,6 +441,49 @@ export async function notifySubClaimed(
 }
 
 /**
+ * Notify admin when a player requests to take an open sub slot
+ */
+export async function notifySubRequestedByPlayer(
+  playerInfo: { full_name: string; email?: string },
+  slotInfo: {
+    week_number: number;
+    day_of_week: string;
+    match_date: string;
+    type: string;
+    court_number: number;
+    original_player_name?: string;
+  }
+): Promise<void> {
+  await fetchGlobalDiscordSettings();
+  if (!hasWebhookConfigured()) return;
+
+  const embed: DiscordEmbed = {
+    title: '🚨 Sub Request Submitted',
+    description: `**${playerInfo.full_name}** has requested to take the open sub slot.`,
+    color: 0xF59E0B, // Amber
+    fields: [
+      {
+        name: 'Match Details',
+        value: `Week ${slotInfo.week_number} • ${slotInfo.day_of_week}, ${slotInfo.match_date} • ${slotInfo.type} (Court ${slotInfo.court_number})`,
+        inline: false,
+      },
+      {
+        name: 'Original Player',
+        value: slotInfo.original_player_name || 'Open Sub',
+        inline: true,
+      },
+      {
+        name: 'Candidate Player',
+        value: playerInfo.full_name,
+        inline: true,
+      },
+    ],
+  };
+
+  await sendDiscordPayload(embed, 'admin');
+}
+
+/**
  * Admin utility for sending custom broadcast announcements
  */
 export async function sendCustomBroadcast(

@@ -18,6 +18,7 @@ import {
   ChevronDown,
   CheckCircle2,
   AlertCircle,
+  ShieldCheck,
 } from 'lucide-vue-next';
 import { formatDayOfWeek, compareMatches } from '../utils/scheduleGenerator';
 import { exportToCSV, exportToExcel, exportToPDF } from '../utils/exportUtils';
@@ -60,14 +61,31 @@ const props = defineProps<{
     blackout_days?: string[];
   } | null;
   session: any;
+  players?: { id: string; full_name: string }[];
 }>();
 
 const emit = defineEmits<{
   (e: 'setSubStatus', slotId: string, status: 'OPEN_SUB' | 'CONFIRMED'): void;
-  (e: 'claimSlot', slotId: string): void;
+  (e: 'claimSlot', slotId: string, playerId?: string): void;
   (e: 'openAuthModal'): void;
   (e: 'updated'): void;
 }>();
+
+const adminEditMode = ref(false);
+const selectedAssignee = ref<Record<string, string>>({});
+
+const getRankedPlayersForSlot = (targetSlot: MatchSlotView) => {
+  if (!props.players) return [];
+  return props.players.map(p => {
+    const playingToday = props.allSlots.some(s => s.player_id === p.id && s.match_date === targetSlot.match_date && s.status === 'CONFIRMED');
+    const weeklyMatches = props.allSlots.filter(s => s.player_id === p.id && s.week_number === targetSlot.week_number && s.status === 'CONFIRMED').length;
+    let penalty = 0;
+    let reason = 'Eligible';
+    if (playingToday) { penalty = -1; reason = 'Ineligible: Playing Today'; }
+    else if (weeklyMatches >= 2) { penalty = -2; reason = 'Ineligible: Max 2 Matches/Wk'; }
+    return { ...p, penalty, reason };
+  }).sort((a, b) => b.penalty - a.penalty);
+};
 
 // Sub Request & League Config State
 const leagueConfig = ref<LeagueConfiguration>({ sub_request_flow: 'maintenance_free' });
@@ -407,6 +425,16 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
         <!-- Right Quick Action Icon Buttons with Hover Titles -->
         <div class="flex items-center gap-2 flex-wrap text-xs font-semibold">
           <button
+            v-if="props.activePlayer?.is_admin"
+            @click="adminEditMode = !adminEditMode"
+            :title="adminEditMode ? 'Exit Admin Edit Mode' : 'Enter Admin Edit Mode'"
+            class="p-2 rounded-xl border transition flex items-center justify-center gap-1.5"
+            :class="adminEditMode ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'"
+          >
+            <ShieldCheck class="w-4 h-4" />
+          </button>
+
+          <button
             @click="selectedFilter = selectedFilter === 'mine' ? 'all' : 'mine'"
             title="My Matches"
             aria-label="My Matches"
@@ -719,8 +747,8 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
 
             <!-- Action Button per Slot -->
             <div>
-              <!-- If this slot belongs to logged in player -->
-              <template v-if="slot.player_id === activePlayerId">
+              <!-- If this slot belongs to logged in player OR Admin Edit Mode -->
+              <template v-if="slot.player_id === activePlayerId || (props.activePlayer?.is_admin && adminEditMode)">
                 <button
                   v-if="slot.status === 'CONFIRMED'"
                   @click="emit('setSubStatus', slot.slot_id, 'OPEN_SUB')"
@@ -738,10 +766,32 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
               </template>
 
               <!-- If this slot is OPEN_SUB and belongs to another player -->
-              <template v-else-if="slot.status === 'OPEN_SUB'">
+              <template v-if="slot.status === 'OPEN_SUB' && slot.player_id !== activePlayerId">
                 <div class="flex flex-col items-end gap-1">
-                  <button
-                    v-if="mySubRequests[slot.slot_id]"
+                  <!-- Admin Assign UI -->
+                  <div v-if="props.activePlayer?.is_admin && adminEditMode" class="flex flex-col items-end gap-1 mt-1">
+                    <select v-model="selectedAssignee[slot.slot_id]" class="text-[10px] p-1 rounded border max-w-[140px] truncate bg-white">
+                      <option disabled value="">Select Player...</option>
+                      <option 
+                        v-for="p in getRankedPlayersForSlot(slot)" 
+                        :key="p.id" 
+                        :value="p.id"
+                        :disabled="p.penalty < 0"
+                      >
+                        {{ p.full_name }} ({{ p.reason }})
+                      </option>
+                    </select>
+                    <button 
+                      @click="emit('claimSlot', slot.slot_id, selectedAssignee[slot.slot_id])"
+                      :disabled="!selectedAssignee[slot.slot_id]"
+                      class="text-[10px] font-bold px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition disabled:opacity-50"
+                    >
+                      Assign
+                    </button>
+                  </div>
+                  <template v-else>
+                    <button
+                      v-if="mySubRequests[slot.slot_id]"
                     @click="handleCancelRequest(slot.slot_id)"
                     :disabled="isSubmittingSubRequest === slot.slot_id"
                     class="text-[11px] font-bold px-3 py-1 bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-700 rounded-lg transition disabled:opacity-50"
@@ -764,6 +814,7 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
                   >
                     Slot will be auto-assigned 24 hours before the match.
                   </span>
+                  </template>
                 </div>
               </template>
             </div>
@@ -849,23 +900,45 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
                 <div class="flex items-center justify-end gap-1.5">
                   <template v-for="slot in match.slots" :key="slot.slot_id">
                     <button
-                      v-if="slot.player_id === activePlayerId && slot.status === 'CONFIRMED'"
+                      v-if="(slot.player_id === activePlayerId || (props.activePlayer?.is_admin && adminEditMode)) && slot.status === 'CONFIRMED'"
                       @click="emit('setSubStatus', slot.slot_id, 'OPEN_SUB')"
                       class="text-[10px] font-bold px-2 py-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 rounded transition"
                     >
                       Request Sub
                     </button>
                     <button
-                      v-else-if="slot.player_id === activePlayerId && slot.status === 'OPEN_SUB'"
+                      v-else-if="(slot.player_id === activePlayerId || (props.activePlayer?.is_admin && adminEditMode)) && slot.status === 'OPEN_SUB'"
                       @click="emit('setSubStatus', slot.slot_id, 'CONFIRMED')"
                       class="text-[10px] font-bold px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded transition"
                     >
                       Reclaim
                     </button>
-                    <template v-else-if="slot.status === 'OPEN_SUB'">
+                    <template v-if="slot.status === 'OPEN_SUB' && slot.player_id !== activePlayerId">
                       <div class="flex flex-col items-end gap-0.5">
-                        <button
-                          v-if="mySubRequests[slot.slot_id]"
+                        <!-- Admin Assign UI -->
+                        <div v-if="props.activePlayer?.is_admin && adminEditMode" class="flex flex-col gap-1 my-1 items-end">
+                          <select v-model="selectedAssignee[slot.slot_id]" class="text-[10px] p-0.5 rounded border max-w-[120px] truncate bg-white">
+                            <option disabled value="">Select Player...</option>
+                            <option 
+                              v-for="p in getRankedPlayersForSlot(slot)" 
+                              :key="p.id" 
+                              :value="p.id"
+                              :disabled="p.penalty < 0"
+                            >
+                              {{ p.full_name }} ({{ p.reason }})
+                            </option>
+                          </select>
+                          <button 
+                            @click="emit('claimSlot', slot.slot_id, selectedAssignee[slot.slot_id])"
+                            :disabled="!selectedAssignee[slot.slot_id]"
+                            class="text-[9px] font-bold px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition disabled:opacity-50"
+                          >
+                            Assign
+                          </button>
+                        </div>
+                        <template v-else>
+                          <button
+                            v-if="mySubRequests[slot.slot_id]"
                           @click="handleCancelRequest(slot.slot_id)"
                           :disabled="isSubmittingSubRequest === slot.slot_id"
                           class="text-[10px] font-bold px-2 py-1 bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-700 rounded transition disabled:opacity-50"
@@ -880,12 +953,13 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
                         >
                           Request Slot
                         </button>
-                        <span
-                          v-if="leagueConfig.sub_request_flow === 'maintenance_free'"
-                          class="text-[9px] text-amber-700 text-right"
-                        >
-                          Auto-assigned 24h prior
-                        </span>
+                          <span
+                            v-if="leagueConfig.sub_request_flow === 'maintenance_free'"
+                            class="text-[9px] text-amber-700 text-right"
+                          >
+                            Auto-assigned 24h prior
+                          </span>
+                        </template>
                       </div>
                     </template>
                   </template>

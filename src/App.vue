@@ -242,25 +242,30 @@ const setSubStatus = async (slotId: string, status: 'OPEN_SUB' | 'CONFIRMED') =>
     });
   }
 
+  const isOverride = targetSlot && targetSlot.player_id !== activePlayerId.value;
+
   notification.value = {
-    text: status === 'OPEN_SUB' ? 'Slot listed on the sub board.' : 'Slot reclaimed.',
+    text: isOverride 
+      ? (status === 'OPEN_SUB' ? `Slot listed on sub board on behalf of ${targetSlot.player_name}.` : `Slot reclaimed on behalf of ${targetSlot.player_name}.`)
+      : (status === 'OPEN_SUB' ? 'Slot listed on the sub board.' : 'Slot reclaimed.'),
   };
   await loadData();
 };
 
-const claimSlot = async (slotId: string) => {
+const claimSlot = async (slotId: string, playerId?: string) => {
   if (!session.value || !activePlayerId.value) {
     authModalOpen.value = true;
     notification.value = { text: 'Please sign in to claim sub slots.', error: true };
     return;
   }
 
+  const finalPlayerId = playerId || activePlayerId.value;
   const targetSlot = allSlots.value.find((s) => s.slot_id === slotId);
 
   // Call the atomic PostgreSQL RPC function
   const { data, error } = await supabase.rpc('claim_sub_slot', {
     target_slot_id: slotId,
-    claiming_player_id: activePlayerId.value,
+    claiming_player_id: finalPlayerId,
   });
 
   if (error) {
@@ -271,6 +276,11 @@ const claimSlot = async (slotId: string) => {
   notification.value = { text: data.message, error: !data.success };
   if (data.success) {
     if (targetSlot) {
+      let claimingPlayerName = activePlayerName.value || 'A League Player';
+      if (playerId && playerId !== activePlayerId.value) {
+        const p = players.value.find((pl) => pl.id === playerId);
+        if (p) claimingPlayerName = p.full_name;
+      }
       notifySubClaimed(
         {
           week_number: targetSlot.week_number,
@@ -280,7 +290,7 @@ const claimSlot = async (slotId: string) => {
           court_number: targetSlot.court_number,
           original_player: targetSlot.player_name,
         },
-        activePlayerName.value || 'A League Player'
+        claimingPlayerName
       );
     }
     await loadData();
@@ -421,6 +431,7 @@ const claimSlot = async (slotId: string) => {
       :active-player-name="activePlayerName"
       :active-player="activePlayer"
       :session="session"
+      :players="players"
       @set-sub-status="setSubStatus"
       @claim-slot="claimSlot"
       @updated="loadData"

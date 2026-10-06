@@ -22,6 +22,7 @@ A self-service portal built for indoor winter tennis contract leagues. Designed 
 
 ### 🔄 Match Schedule & Sub Request Management
 - **Interactive Season Schedule**: View weekly match assignments, court times, and player pairings in either Card view or Compact Table view.
+- **Admin Edit Mode**: League admins can toggle an edit mode directly on the schedule to manually override slots (e.g. list a slot on the sub board on behalf of a player) or instantly re-assign an `OPEN_SUB` slot to a specific player. The assignment dropdown dynamically enforces eligibility rules (max 1 match/day, max 2 matches/week).
 - **Dual Sub Request Flows** (Configured via Admin League Settings):
   - 🤖 **Maintenance Free (Auto-Draft - Default)**: Players request open sub slots through the schedule. 24 hours prior to each match, an automated drafting engine evaluates all candidate requests and assigns the slot to the highest-ranked eligible player (fewest season substitutions, strictly honoring max 1 match/day and max 2 matches/week limits). Eliminates first-come-first-serve racing.
   - 🛡️ **Admin Assists (Manual Approval)**: Players submit sub requests. All requests are aggregated and ranked algorithmically in the Admin Pending Requests panel. The administrator reviews candidate rankings and clicks **Approve Sub** to select the winning player.
@@ -48,6 +49,7 @@ A self-service portal built for indoor winter tennis contract leagues. Designed 
 - **Multi-Channel Targeted Routing**:
   - 📝 **Admin Channel**: New player intake registrations and sub-request submissions (alerts managers to review candidate requests).
   - 📢 **Public Channel**: Player approvals, season schedule releases, open sub alerts, sub claims/assignments, and custom broadcasts.
+- **Interactive Notifications**: All Discord embeds feature dynamic URLs linking directly back to the app, making it seamless for players to click a notification and immediately claim a sub.
 - **Built-in Security & Anti-Spam Guardrails**:
   - **Same-Origin Enforcement**: Rejects cross-origin requests from outside sites (`sec-fetch-site` verification).
   - **IP Rate Limiting**: Max 8 requests per 60 seconds per IP to prevent spamming.

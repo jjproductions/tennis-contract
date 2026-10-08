@@ -42,6 +42,8 @@ const DEFAULT_CONFIG: DiscordNotificationConfig = {
   sub_claimed: true,
 };
 
+const APP_URL = typeof window !== 'undefined' ? window.location.origin : '';
+
 let cachedWebhookUrl: string | null = null;
 let cachedConfig: DiscordNotificationConfig | null = null;
 
@@ -278,6 +280,7 @@ export async function testDiscordWebhook(
 
   const embed: DiscordEmbed = {
     title: '🎾 Discord Webhook Connected!',
+    url: APP_URL,
     description: `Linked to ${target} channel! You will receive real-time alerts & schedule updates.`,
     color: 0x10B981, // Emerald Green
     fields: [
@@ -309,6 +312,7 @@ export async function notifyNewPlayerIntake(
 
   const embed: DiscordEmbed = {
     title: isUpdate ? '✏️ Player Preferences Updated' : '📝 New Player Registration Received',
+    url: APP_URL,
     description: isUpdate
       ? `**${player.full_name}** has updated their league preferences & blackout dates.`
       : `**${player.full_name}** has submitted registration details for the Winter Tennis season!`,
@@ -342,6 +346,7 @@ export async function notifyPlayerApproved(player: { full_name: string; email: s
 
   const embed: DiscordEmbed = {
     title: '🎉 Player Approved for Season Roster!',
+    url: APP_URL,
     description: `Welcome **${player.full_name}** to the Winter Tennis League official roster!`,
     color: 0x10B981, // Green
     fields: [
@@ -367,6 +372,7 @@ export async function notifySchedulePublished(stats: {
 
   const embed: DiscordEmbed = {
     title: '📅 New Season Schedule Published!',
+    url: APP_URL,
     description: `The complete **${stats.numWeeks}-Week Winter Season Match Schedule** has been generated and published!`,
     color: 0x8B5CF6, // Purple
     fields: [
@@ -396,13 +402,14 @@ export async function notifySubRequested(slot: {
 
   const embed: DiscordEmbed = {
     title: '🚨 Open Sub Available!',
+    url: APP_URL,
     description: `**${slot.player_name}** needs a substitute for an upcoming match!`,
     color: 0xF59E0B, // Amber / Orange
     fields: [
       { name: 'Match Date', value: `${slot.day_of_week}, ${slot.match_date} (Week ${slot.week_number})`, inline: false },
       { name: 'Match Type', value: `${slot.type} - Court ${slot.court_number}`, inline: true },
       { name: 'Original Player', value: slot.player_name, inline: true },
-      { name: 'How to Claim', value: 'Log into the Winter Tennis portal and click **Claim Sub** on the schedule page!', inline: false },
+      { name: 'How to Claim', value: `[Log into the Winter Tennis portal](${APP_URL}) and click **Claim Sub** on the schedule page!`, inline: false },
     ],
   };
 
@@ -428,6 +435,7 @@ export async function notifySubClaimed(
 
   const embed: DiscordEmbed = {
     title: '🤝 Sub Claimed!',
+    url: APP_URL,
     description: `**${subPlayerName}** has claimed the substitute slot for **${slot.original_player}**!`,
     color: 0x10B981, // Emerald Green
     fields: [
@@ -438,6 +446,50 @@ export async function notifySubClaimed(
   };
 
   await sendDiscordPayload(embed, 'public');
+}
+
+/**
+ * Notify admin when a player requests to take an open sub slot
+ */
+export async function notifySubRequestedByPlayer(
+  playerInfo: { full_name: string; email?: string },
+  slotInfo: {
+    week_number: number;
+    day_of_week: string;
+    match_date: string;
+    type: string;
+    court_number: number;
+    original_player_name?: string;
+  }
+): Promise<void> {
+  await fetchGlobalDiscordSettings();
+  if (!hasWebhookConfigured()) return;
+
+  const embed: DiscordEmbed = {
+    title: '🚨 Sub Request Submitted',
+    url: APP_URL,
+    description: `**${playerInfo.full_name}** has requested to take the open sub slot.`,
+    color: 0xF59E0B, // Amber
+    fields: [
+      {
+        name: 'Match Details',
+        value: `Week ${slotInfo.week_number} • ${slotInfo.day_of_week}, ${slotInfo.match_date} • ${slotInfo.type} (Court ${slotInfo.court_number})`,
+        inline: false,
+      },
+      {
+        name: 'Original Player',
+        value: slotInfo.original_player_name || 'Open Sub',
+        inline: true,
+      },
+      {
+        name: 'Candidate Player',
+        value: playerInfo.full_name,
+        inline: true,
+      },
+    ],
+  };
+
+  await sendDiscordPayload(embed, 'admin');
 }
 
 /**
@@ -471,6 +523,7 @@ export async function sendCustomBroadcast(
 
   const embed: DiscordEmbed = {
     title: `${icon} ${title.trim()}`,
+    url: APP_URL,
     description: message.trim(),
     color: color,
     fields: authorName ? [{ name: 'Posted By', value: authorName, inline: true }] : undefined,

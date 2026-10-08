@@ -202,7 +202,7 @@ BEGIN
         FROM sub_request_rankings
         WHERE slot_id = v_slot.slot_id
           AND rule_penalty = 0
-        ORDER BY times_subbed ASC, requested_at ASC
+        ORDER BY is_owed_match DESC, times_subbed ASC, requested_at ASC
         LIMIT 1;
 
         IF FOUND THEN
@@ -375,6 +375,7 @@ CREATE TABLE IF NOT EXISTS "public"."sub_requests" (
 ALTER TABLE "public"."sub_requests" OWNER TO "postgres";
 
 
+DROP VIEW IF EXISTS "public"."sub_request_rankings";
 CREATE OR REPLACE VIEW "public"."sub_request_rankings" AS
 SELECT 
     sr.id AS request_id,
@@ -386,6 +387,18 @@ SELECT
         SELECT COUNT(*) FROM match_slots ms 
         WHERE ms.player_id = p.id AND ms.original_player_id IS NOT NULL
     ) AS times_subbed,
+    -- Check if the requester owes the slot owner a match of the same type
+    (
+        (SELECT COUNT(*) FROM match_slots ms_owed JOIN matches m_owed ON ms_owed.match_id = m_owed.id
+         WHERE ms_owed.player_id = sr.requesting_player_id 
+         AND ms_owed.original_player_id = ms_target.player_id 
+         AND m_owed.type = m_target.type AND ms_owed.status = 'CONFIRMED')
+        >
+        (SELECT COUNT(*) FROM match_slots ms_owed_back JOIN matches m_owed_back ON ms_owed_back.match_id = m_owed_back.id
+         WHERE ms_owed_back.player_id = ms_target.player_id 
+         AND ms_owed_back.original_player_id = sr.requesting_player_id 
+         AND m_owed_back.type = m_target.type AND ms_owed_back.status = 'CONFIRMED')
+    ) AS is_owed_match,
     -- 0 means eligible. Negative numbers mean ineligible due to a specific rule.
     CASE 
         -- Rule 1: Max 1 match per day

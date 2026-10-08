@@ -35,6 +35,7 @@ export interface MatchSlotView {
   court_number: number;
   status: 'CONFIRMED' | 'OPEN_SUB';
   player_id: string | null;
+  original_player_id: string | null;
   player_name: string;
 }
 
@@ -83,8 +84,40 @@ const getRankedPlayersForSlot = (targetSlot: MatchSlotView) => {
     let reason = 'Eligible';
     if (playingToday) { penalty = -1; reason = 'Ineligible: Playing Today'; }
     else if (weeklyMatches >= 2) { penalty = -2; reason = 'Ineligible: Max 2 Matches/Wk'; }
-    return { ...p, penalty, reason };
-  }).sort((a, b) => b.penalty - a.penalty);
+
+    const timesSubbed = props.allSlots.filter(s => s.player_id === p.id && s.original_player_id !== null && s.status === 'CONFIRMED').length;
+
+    const owedByTargetToCandidate = props.allSlots.filter(s => 
+      s.player_id === p.id && 
+      s.original_player_id === targetSlot.player_id && 
+      s.type === targetSlot.type && 
+      s.status === 'CONFIRMED'
+    ).length;
+    
+    const owedByCandidateToTarget = props.allSlots.filter(s => 
+      s.player_id === targetSlot.player_id && 
+      s.original_player_id === p.id && 
+      s.type === targetSlot.type && 
+      s.status === 'CONFIRMED'
+    ).length;
+
+    const isOwedMatch = owedByCandidateToTarget > owedByTargetToCandidate;
+
+    if (penalty === 0) {
+      if (isOwedMatch) {
+        reason += ' - Karma: Owed Match';
+      } else if (timesSubbed > 0) {
+        reason += ` - Subbed ${timesSubbed}x`;
+      }
+    }
+
+    return { ...p, penalty, reason, timesSubbed, isOwedMatch };
+  }).sort((a, b) => {
+    if (a.penalty !== b.penalty) return b.penalty - a.penalty;
+    if (a.isOwedMatch && !b.isOwedMatch) return -1;
+    if (!a.isOwedMatch && b.isOwedMatch) return 1;
+    return a.timesSubbed - b.timesSubbed;
+  });
 };
 
 // Sub Request & League Config State

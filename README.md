@@ -51,9 +51,12 @@ A comprehensive, self-service web portal built for indoor winter tennis contract
 - **One-Click Publishing & Live Sync**: Preview court distribution and quota compliance summaries before committing the schedule directly to Supabase with real-time Discord league broadcasts.
 
 ### 🔄 Match Schedule & Sub Management
-- **Interactive Match Views**:
+- **Interactive Match Views & Smart Navigation**:
   - Toggle between **Card View** (grouped by week with clear court badges) and **Compact Table View** for rapid scanning.
-  - Filter matches by week number with quick navigation.
+  - **Dynamic Current Week Detection**: Automatically calculates the active league week from match dates and the player's local date, opening directly to the present week upon loading.
+  - **Week Stepper & Quick Navigation**: Browse seamlessly between past and future fixtures using `◀ Prev Week` and `Next Week ▶` stepper controls, an active date range badge (e.g. `Oct 19 – Oct 21`), or a direct week dropdown.
+  - **One-Click "This Week" Return**: A quick-action button appears when browsing past or future weeks, allowing players to jump immediately back to active fixtures.
+  - **Visual Week Status Indicators**: Matches scheduled in the active week display prominent **Current** badges on cards and table rows.
 - **Sub Listing & Slot Reclaiming**:
   - Players can list their scheduled slot on the league sub board with one click (**Sub Out**).
   - Slot owners can reclaim their listed slot anytime before a sub is confirmed (**Reclaim Slot**).

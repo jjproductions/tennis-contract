@@ -59,6 +59,7 @@ export interface SubRequestRanking {
   full_name: string;
   email: string;
   times_subbed: number;
+  is_owed_match: boolean;
   rule_penalty: number;
   match_id: string;
   match_date: string;
@@ -96,6 +97,7 @@ const activeTab = ref<'pending' | 'roster' | 'generator' | 'discord' | 'settings
 
 // Sub Requests State
 const subRequests = ref<SubRequestRanking[]>([]);
+const openSubSlots = ref<any[]>([]);
 const isProcessingSubRequest = ref<string | null>(null);
 
 // League Configuration State
@@ -129,12 +131,28 @@ const fetchRoster = async () => {
 };
 
 const fetchSubRequests = async () => {
-  const { data, error } = await supabase
+  const { data: requestsData, error: requestsError } = await supabase
     .from('sub_request_rankings')
     .select('*')
     .order('requested_at', { ascending: true });
-  if (!error && data) {
-    subRequests.value = data as SubRequestRanking[];
+  if (!requestsError && requestsData) {
+    subRequests.value = requestsData as SubRequestRanking[];
+  }
+
+  const { data: slotsData, error: slotsError } = await supabase
+    .from('match_slots')
+    .select(`
+      id,
+      match_id,
+      status,
+      player_id,
+      players!match_slots_player_id_fkey ( full_name ),
+      matches ( id, week_number, day_of_week, match_date, type, court_number )
+    `)
+    .eq('status', 'OPEN_SUB');
+  
+  if (!slotsError && slotsData) {
+    openSubSlots.value = slotsData;
   }
 };
 
@@ -154,6 +172,24 @@ onMounted(async () => {
 
 const groupedSubRequests = computed<GroupedSubRequestSlot[]>(() => {
   const map = new Map<string, GroupedSubRequestSlot>();
+
+  // Add all currently open sub slots
+  for (const slot of openSubSlots.value) {
+    if (!slot.matches) continue;
+    map.set(slot.id, {
+      slot_id: slot.id,
+      match_id: slot.matches.id,
+      week_number: slot.matches.week_number,
+      day_of_week: slot.matches.day_of_week,
+      match_date: slot.matches.match_date,
+      type: slot.matches.type,
+      court_number: slot.matches.court_number,
+      original_player_name: slot.players?.full_name || 'Open Sub',
+      requests: [],
+    });
+  }
+
+  // Add volunteer requests
   for (const item of subRequests.value) {
     if (!map.has(item.slot_id)) {
       map.set(item.slot_id, {
@@ -177,7 +213,10 @@ const groupedSubRequests = computed<GroupedSubRequestSlot[]>(() => {
       // 1. Eligible (rule_penalty === 0) before penalties (< 0)
       if (a.rule_penalty === 0 && b.rule_penalty !== 0) return -1;
       if (a.rule_penalty !== 0 && b.rule_penalty === 0) return 1;
-      // 2. Fewest subs first
+      // 2. Owed match prioritization
+      if (a.is_owed_match && !b.is_owed_match) return -1;
+      if (!a.is_owed_match && b.is_owed_match) return 1;
+      // 3. Fewest subs first
       if (a.times_subbed !== b.times_subbed) return a.times_subbed - b.times_subbed;
       // 3. Earliest requested
       return new Date(a.requested_at).getTime() - new Date(b.requested_at).getTime();
@@ -479,7 +518,7 @@ const handleTriggerAutoDraft = async () => {
           <div class="flex items-center gap-2">
             <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
               <Clock class="w-4 h-4 text-amber-600" />
-              Sub Slot Requests ({{ subRequests.length }})
+              Sub Slot Requests ({{ openSubSlots.length }})
             </h4>
             <span
               class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
@@ -524,6 +563,10 @@ const handleTriggerAutoDraft = async () => {
 
             <!-- Candidate Requests for this Slot -->
             <div class="p-3 divide-y divide-slate-100">
+              <div v-if="group.requests.length === 0" class="py-3 text-center text-xs text-slate-500 italic flex items-center justify-center gap-1.5">
+                <AlertCircle class="w-3.5 h-3.5 text-slate-400" />
+                No volunteers have claimed this sub slot yet.
+              </div>
               <div
                 v-for="r in group.requests"
                 :key="r.request_id"
@@ -546,6 +589,13 @@ const handleTriggerAutoDraft = async () => {
                     >
                       <Star class="w-3 h-3 fill-emerald-600 text-emerald-600" />
                       Recommended
+                    </span>
+                    <span
+                      v-if="r.is_owed_match"
+                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 shadow-xs"
+                    >
+                      <Star class="w-3 h-3 fill-amber-600 text-amber-600" />
+                      Owed Match: Returning Favor
                     </span>
 
                     <!-- Rule Ineligibility Warnings -->

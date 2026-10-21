@@ -24,6 +24,7 @@ interface MatchSlotView {
   court_number: number;
   status: 'CONFIRMED' | 'OPEN_SUB';
   player_id: string | null;
+  original_player_id: string | null;
   player_name: string;
 }
 
@@ -162,6 +163,7 @@ const loadData = async () => {
       id,
       status,
       player_id,
+      original_player_id,
       players!match_slots_player_id_fkey ( full_name ),
       matches ( id, week_number, day_of_week, match_date, type, court_number )
     `);
@@ -179,6 +181,7 @@ const loadData = async () => {
         court_number: item.matches.court_number,
         status: item.status,
         player_id: item.player_id,
+        original_player_id: item.original_player_id,
         player_name: item.players?.full_name ?? 'Vacant',
       }));
 
@@ -354,14 +357,14 @@ const claimSlot = async (slotId: string, playerId?: string) => {
     <!-- View Switcher -->
     <div class="flex gap-2 mb-6 border-b border-slate-200 pb-3">
       <button
-        @click="currentView = 'schedule'"
+        @click="currentView = 'schedule'; notification = null;"
         :class="currentView === 'schedule' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
         class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition"
       >
         Match Schedule & Sub Board
       </button>
       <button
-        @click="currentView = 'intake'"
+        @click="currentView = 'intake'; notification = null;"
         :class="currentView === 'intake' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
         class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition"
       >
@@ -369,7 +372,7 @@ const claimSlot = async (slotId: string, playerId?: string) => {
       </button>
       <button
         v-if="session && isAdmin"
-        @click="currentView = 'admin'"
+        @click="currentView = 'admin'; notification = null;"
         :class="currentView === 'admin' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
         class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition flex items-center gap-2"
       >

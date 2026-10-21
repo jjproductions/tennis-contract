@@ -16,6 +16,8 @@ import {
   FileSpreadsheet,
   FileCode,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   AlertCircle,
   ShieldCheck,
@@ -35,6 +37,7 @@ export interface MatchSlotView {
   court_number: number;
   status: 'CONFIRMED' | 'OPEN_SUB';
   player_id: string | null;
+  original_player_id: string | null;
   player_name: string;
 }
 
@@ -83,8 +86,40 @@ const getRankedPlayersForSlot = (targetSlot: MatchSlotView) => {
     let reason = 'Eligible';
     if (playingToday) { penalty = -1; reason = 'Ineligible: Playing Today'; }
     else if (weeklyMatches >= 2) { penalty = -2; reason = 'Ineligible: Max 2 Matches/Wk'; }
-    return { ...p, penalty, reason };
-  }).sort((a, b) => b.penalty - a.penalty);
+
+    const timesSubbed = props.allSlots.filter(s => s.player_id === p.id && s.original_player_id !== null && s.status === 'CONFIRMED').length;
+
+    const owedByTargetToCandidate = props.allSlots.filter(s => 
+      s.player_id === p.id && 
+      s.original_player_id === targetSlot.player_id && 
+      s.type === targetSlot.type && 
+      s.status === 'CONFIRMED'
+    ).length;
+    
+    const owedByCandidateToTarget = props.allSlots.filter(s => 
+      s.player_id === targetSlot.player_id && 
+      s.original_player_id === p.id && 
+      s.type === targetSlot.type && 
+      s.status === 'CONFIRMED'
+    ).length;
+
+    const isOwedMatch = owedByCandidateToTarget > owedByTargetToCandidate;
+
+    if (penalty === 0) {
+      if (isOwedMatch) {
+        reason += ' - Karma: Owed Match';
+      } else if (timesSubbed > 0) {
+        reason += ` - Subbed ${timesSubbed}x`;
+      }
+    }
+
+    return { ...p, penalty, reason, timesSubbed, isOwedMatch };
+  }).sort((a, b) => {
+    if (a.penalty !== b.penalty) return b.penalty - a.penalty;
+    if (a.isOwedMatch && !b.isOwedMatch) return -1;
+    if (!a.isOwedMatch && b.isOwedMatch) return 1;
+    return a.timesSubbed - b.timesSubbed;
+  });
 };
 
 // Sub Request & League Config State
@@ -291,6 +326,149 @@ const selectedWeek = ref<number | 'all'>('all');
 const searchQuery = ref<string>('');
 const viewMode = ref<'cards' | 'table'>('cards');
 const exportMenuOpen = ref<boolean>(false);
+const hasInitializedWeek = ref<boolean>(false);
+
+// Compute dynamic current active week based on match dates and today's date
+const currentWeekNumber = computed<number>(() => {
+  if (!props.allSlots || props.allSlots.length === 0) return 1;
+
+  // Local YYYY-MM-DD
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  // Build a map of week -> { minDate, maxDate }
+  const weekMap = new Map<number, { min: string; max: string }>();
+  for (const slot of props.allSlots) {
+    if (!slot.match_date) continue;
+    const existing = weekMap.get(slot.week_number);
+    if (!existing) {
+      weekMap.set(slot.week_number, { min: slot.match_date, max: slot.match_date });
+    } else {
+      if (slot.match_date < existing.min) existing.min = slot.match_date;
+      if (slot.match_date > existing.max) existing.max = slot.match_date;
+    }
+  }
+
+  const sortedWeeks = Array.from(weekMap.keys()).sort((a, b) => a - b);
+  if (sortedWeeks.length === 0) return 1;
+
+  // If today is before season start, default to first week
+  const firstWeek = sortedWeeks[0];
+  if (todayStr < weekMap.get(firstWeek)!.min) {
+    return firstWeek;
+  }
+
+  // Find week where today falls between this week's start and next week's start
+  for (let i = 0; i < sortedWeeks.length; i++) {
+    const w = sortedWeeks[i];
+    const currentRange = weekMap.get(w)!;
+    const nextWeek = sortedWeeks[i + 1];
+
+    if (nextWeek) {
+      const nextRange = weekMap.get(nextWeek)!;
+      if (todayStr >= currentRange.min && todayStr < nextRange.min) {
+        return w;
+      }
+    } else {
+      // Last week of season
+      if (todayStr >= currentRange.min) {
+        return w;
+      }
+    }
+  }
+
+  // Fallback: check direct interval
+  for (const [w, range] of weekMap.entries()) {
+    if (todayStr >= range.min && todayStr <= range.max) {
+      return w;
+    }
+  }
+
+  return sortedWeeks[0] || 1;
+});
+
+// Auto-select current week when slots load
+watch(
+  () => props.allSlots,
+  (newSlots) => {
+    if (newSlots && newSlots.length > 0 && !hasInitializedWeek.value) {
+      selectedWeek.value = currentWeekNumber.value;
+      hasInitializedWeek.value = true;
+    }
+  },
+  { immediate: true }
+);
+
+const canGoPrev = computed<boolean>(() => {
+  if (typeof selectedWeek.value !== 'number') {
+    return availableWeeks.value.length > 0;
+  }
+  const idx = availableWeeks.value.indexOf(selectedWeek.value);
+  return idx > 0;
+});
+
+const canGoNext = computed<boolean>(() => {
+  if (typeof selectedWeek.value !== 'number') {
+    return availableWeeks.value.length > 0;
+  }
+  const idx = availableWeeks.value.indexOf(selectedWeek.value);
+  return idx >= 0 && idx < availableWeeks.value.length - 1;
+});
+
+const goPrevWeek = () => {
+  if (typeof selectedWeek.value !== 'number') {
+    const currentIdx = availableWeeks.value.indexOf(currentWeekNumber.value);
+    if (currentIdx > 0) {
+      selectedWeek.value = availableWeeks.value[currentIdx - 1];
+    } else {
+      selectedWeek.value = availableWeeks.value[0] || 1;
+    }
+    return;
+  }
+  const idx = availableWeeks.value.indexOf(selectedWeek.value);
+  if (idx > 0) {
+    selectedWeek.value = availableWeeks.value[idx - 1];
+  }
+};
+
+const goNextWeek = () => {
+  if (typeof selectedWeek.value !== 'number') {
+    const currentIdx = availableWeeks.value.indexOf(currentWeekNumber.value);
+    if (currentIdx >= 0 && currentIdx < availableWeeks.value.length - 1) {
+      selectedWeek.value = availableWeeks.value[currentIdx + 1];
+    } else {
+      selectedWeek.value = availableWeeks.value[0] || 1;
+    }
+    return;
+  }
+  const idx = availableWeeks.value.indexOf(selectedWeek.value);
+  if (idx >= 0 && idx < availableWeeks.value.length - 1) {
+    selectedWeek.value = availableWeeks.value[idx + 1];
+  }
+};
+
+const jumpToCurrentWeek = () => {
+  selectedWeek.value = currentWeekNumber.value;
+};
+
+// Formatted date label for selected week
+const selectedWeekDateLabel = computed<string>(() => {
+  if (selectedWeek.value === 'all') return 'Full Season';
+  const weekSlots = props.allSlots.filter((s) => s.week_number === selectedWeek.value && s.match_date);
+  if (weekSlots.length === 0) return '';
+  const dates = Array.from(new Set(weekSlots.map((s) => s.match_date))).sort();
+  if (dates.length === 0) return '';
+  const formatDateShort = (dStr: string) => {
+    const [y, m, d] = dStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  if (dates.length === 1) return formatDateShort(dates[0]);
+  return `${formatDateShort(dates[0])} – ${formatDateShort(dates[dates.length - 1])}`;
+});
 
 const handleExportPDF = () => {
   const slotsToExport = filteredGroupedMatches.value.flatMap((m) => m.slots);
@@ -546,17 +724,58 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
             </button>
           </div>
 
-          <!-- Week Dropdown -->
-          <div class="relative">
+          <!-- Week Stepper & Selector -->
+          <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+            <button
+              @click="goPrevWeek"
+              :disabled="!canGoPrev"
+              class="p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white disabled:opacity-30 disabled:pointer-events-none transition shadow-2xs"
+              title="Previous Week"
+              aria-label="Previous Week"
+            >
+              <ChevronLeft class="w-4 h-4" />
+            </button>
+
             <select
               v-model="selectedWeek"
-              class="text-xs font-semibold bg-slate-100 border border-transparent rounded-xl px-3 py-1.5 pr-7 text-slate-700 hover:bg-slate-200/70 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="text-xs font-bold bg-transparent border-0 px-2 py-0.5 text-slate-800 cursor-pointer focus:outline-none focus:ring-0"
+              aria-label="Select week"
             >
-              <option value="all">All Weeks (1-{{ availableWeeks.length || 24 }})</option>
+              <option value="all">All Weeks (Full Season)</option>
               <option v-for="w in availableWeeks" :key="w" :value="w">
-                Week {{ w }}
+                Week {{ w }}{{ w === currentWeekNumber ? ' • Current' : '' }}
               </option>
             </select>
+
+            <button
+              @click="goNextWeek"
+              :disabled="!canGoNext"
+              class="p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white disabled:opacity-30 disabled:pointer-events-none transition shadow-2xs"
+              title="Next Week"
+              aria-label="Next Week"
+            >
+              <ChevronRight class="w-4 h-4" />
+            </button>
+          </div>
+
+          <!-- Date range indicator & Quick Jump back to current week -->
+          <div class="flex items-center gap-1.5">
+            <span
+              v-if="selectedWeekDateLabel"
+              class="text-[11px] font-medium px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 hidden sm:inline-block"
+            >
+              {{ selectedWeekDateLabel }}
+            </span>
+
+            <button
+              v-if="selectedWeek !== currentWeekNumber"
+              @click="jumpToCurrentWeek"
+              class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition shadow-2xs"
+              title="Jump back to current week"
+            >
+              <Calendar class="w-3 h-3" />
+              <span>This Week (Wk {{ currentWeekNumber }})</span>
+            </button>
           </div>
         </div>
 
@@ -640,11 +859,11 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
       <div>
         <h3 class="text-sm font-bold text-slate-700">No matches found</h3>
         <p class="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-          No scheduled matches match your selected filters (Week {{ selectedWeek }}, {{ selectedFilter }} view).
+          No scheduled matches match your selected filters ({{ selectedWeek === 'all' ? 'All Weeks' : `Week ${selectedWeek}` }}, {{ selectedFilter }} view).
         </p>
       </div>
       <button
-        @click="selectedFilter = 'all'; selectedWeek = 'all'; searchQuery = '';"
+        @click="selectedFilter = 'all'; selectedWeek = currentWeekNumber; searchQuery = '';"
         class="text-xs font-semibold text-blue-600 hover:underline"
       >
         Reset Filters
@@ -666,8 +885,14 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
         <!-- Match Header -->
         <div class="p-4 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center gap-2.5">
-            <span class="text-xs font-extrabold px-2.5 py-1 bg-slate-800 text-white rounded-lg">
-              Wk {{ match.week_number }}
+            <span
+              class="text-xs font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1.5"
+              :class="match.week_number === currentWeekNumber ? 'bg-blue-600 text-white' : 'bg-slate-800 text-white'"
+            >
+              <span>Wk {{ match.week_number }}</span>
+              <span v-if="match.week_number === currentWeekNumber" class="text-[9px] font-bold px-1.5 py-0.2 bg-white/20 rounded">
+                Current
+              </span>
             </span>
             <div>
               <div class="text-xs font-bold text-slate-800">
@@ -844,7 +1069,14 @@ const filteredGroupedMatches = computed<GroupedMatch[]>(() => {
               class="hover:bg-slate-50/80 transition"
               :class="{ 'bg-blue-50/30': match.slots.some((s) => s.player_id === activePlayerId) }"
             >
-              <td class="p-3 font-extrabold text-slate-800">Wk {{ match.week_number }}</td>
+              <td class="p-3 font-extrabold text-slate-800">
+                <div class="flex items-center gap-1.5">
+                  <span :class="{ 'text-blue-600 font-black': match.week_number === currentWeekNumber }">Wk {{ match.week_number }}</span>
+                  <span v-if="match.week_number === currentWeekNumber" class="text-[9px] font-bold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">
+                    Current
+                  </span>
+                </div>
+              </td>
               <td class="p-3">
                 <div class="font-bold text-slate-800">{{ formatDayOfWeek(match.day_of_week) }}</div>
                 <div class="text-[10px] text-slate-400">{{ match.match_date }}</div>

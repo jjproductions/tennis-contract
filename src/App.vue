@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { supabase } from './supabase';
-import { AlertCircle, CheckCircle2, LogOut, User, ShieldCheck, LogIn, X } from 'lucide-vue-next';
+import { AlertCircle, CheckCircle2, LogOut, ShieldCheck, LogIn, X, KeyRound } from 'lucide-vue-next';
 import PlayerIntake from './components/PlayerIntake.vue';
 import AuthModal from './components/AuthModal.vue';
 import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
@@ -44,11 +44,19 @@ const isAdmin = ref<boolean>(false);
 const activePlayer = ref<any>(null);
 const session = ref<any>(null);
 const authModalOpen = ref<boolean>(false);
-const authModalMode = ref<'normal' | 'recovery'>('normal');
+const authModalMode = ref<'normal' | 'recovery' | 'reset'>('normal');
 const allSlots = ref<MatchSlotView[]>([]);
 const loading = ref<boolean>(true);
 const notification = ref<NotificationState | null>(null);
 const currentView = ref<'intake' | 'schedule' | 'admin'>('schedule');
+const profileMenuOpen = ref<boolean>(false);
+const profileDropdownRef = ref<HTMLElement | null>(null);
+
+const handleClickOutside = (event: MouseEvent) => {
+  if (profileDropdownRef.value && !profileDropdownRef.value.contains(event.target as Node)) {
+    profileMenuOpen.value = false;
+  }
+};
 
 // Resolve authenticated user identity against players table
 const resolvePlayerIdentity = async () => {
@@ -88,6 +96,7 @@ const resolvePlayerIdentity = async () => {
 };
 
 const handleSignOut = async () => {
+  profileMenuOpen.value = false;
   await supabase.auth.signOut();
   session.value = null;
   activePlayerId.value = '';
@@ -192,6 +201,7 @@ const loadData = async () => {
 };
 
 onMounted(async () => {
+  document.addEventListener('click', handleClickOutside);
   await loadData();
   await resolvePlayerIdentity();
 
@@ -207,10 +217,14 @@ onMounted(async () => {
     if (event === 'PASSWORD_RECOVERY') {
       authModalMode.value = 'recovery';
       authModalOpen.value = true;
-    } else if (newSession && authModalOpen.value && authModalMode.value !== 'recovery') {
+    } else if (newSession && authModalOpen.value && authModalMode.value !== 'recovery' && authModalMode.value !== 'reset') {
       handleAuthenticated({ type: 'signed_in' });
     }
   });
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
 });
 
 
@@ -307,40 +321,102 @@ const claimSlot = async (slotId: string, playerId?: string) => {
     <AuthModal
       v-if="authModalOpen"
       :mode="authModalMode"
+      :initial-email="userEmail"
+      @update:mode="authModalMode = $event"
       @authenticated="handleAuthenticated"
       @close="authModalOpen = false; authModalMode = 'normal';"
     />
 
     <!-- Global Header & Identity Status -->
-    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6 flex items-center justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-slate-800">Indoor Winter Tennis Portal</h1>
         <!-- <p class="text-sm text-slate-500">Vue 3 + Supabase Self-Service Sub & Swap Manager</p> -->
       </div>
 
-      <!-- Auth Status Badge -->
-      <div v-if="session && activePlayerId" class="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-        <div class="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm">
-          <User class="w-5 h-5" />
-        </div>
-        <div>
-          <div class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-            {{ activePlayerName }}
-            <ShieldCheck class="w-3.5 h-3.5 text-emerald-600" />
-            <span v-if="isAdmin" class="text-[10px] font-extrabold uppercase px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded border border-amber-300">
-              Admin
-            </span>
-          </div>
-          <div class="text-[11px] text-slate-400">{{ userEmail }}</div>
-        </div>
+      <!-- Profile Menu Trigger & Dropdown -->
+      <div v-if="session && activePlayerId" ref="profileDropdownRef" class="relative">
         <button
-          @click="handleSignOut"
-          class="ml-2 text-xs font-medium text-slate-500 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition flex items-center gap-1"
-          title="Sign Out"
+          type="button"
+          @click="profileMenuOpen = !profileMenuOpen"
+          class="w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center font-bold text-base shadow-sm transition hover:ring-4 hover:ring-blue-500/20 active:scale-95 focus:outline-none"
+          :class="{ 'ring-4 ring-blue-500/30': profileMenuOpen }"
+          :title="`Account menu (${activePlayerName})`"
+          :aria-expanded="profileMenuOpen"
+          aria-haspopup="true"
         >
-          <LogOut class="w-4 h-4" />
-          <span class="hidden sm:inline">Sign Out</span>
+          {{ activePlayerName ? activePlayerName.charAt(0).toUpperCase() : 'U' }}
         </button>
+
+        <!-- Dropdown Menu: 3 Sections -->
+        <div
+          v-if="profileMenuOpen"
+          class="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200/90 z-50 divide-y divide-slate-100 overflow-hidden"
+        >
+          <!-- Section 1: User Info Section -->
+          <div class="p-4 bg-gradient-to-br from-slate-50 to-blue-50/40">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow flex-shrink-0">
+                {{ activePlayerName ? activePlayerName.charAt(0).toUpperCase() : 'U' }}
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5">
+                  <span class="truncate">{{ activePlayerName }}</span>
+                  <ShieldCheck class="w-4 h-4 text-emerald-600 flex-shrink-0" title="Verified Member" />
+                </div>
+                <div class="text-xs text-slate-500 truncate mt-0.5">{{ userEmail }}</div>
+                <div class="mt-2">
+                  <span
+                    v-if="isAdmin"
+                    class="text-[10px] font-extrabold uppercase px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md border border-amber-300 inline-flex items-center gap-1"
+                  >
+                    League Admin
+                  </span>
+                  <span
+                    v-else
+                    class="text-[10px] font-semibold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md border border-blue-200 inline-flex items-center"
+                  >
+                    Verified Player
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Change Password Section -->
+          <div class="p-1.5">
+            <button
+              type="button"
+              @click="profileMenuOpen = false; authModalMode = 'recovery'; authModalOpen = true;"
+              class="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:text-blue-700 hover:bg-blue-50/80 rounded-xl transition text-left group"
+            >
+              <div class="p-1.5 rounded-lg bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600 transition">
+                <KeyRound class="w-4 h-4" />
+              </div>
+              <div>
+                <div class="font-semibold text-slate-800 group-hover:text-blue-700">Change Password</div>
+                <div class="text-[10px] text-slate-400 font-normal">Update your login credentials</div>
+              </div>
+            </button>
+          </div>
+
+          <!-- Section 3: Sign Out Section -->
+          <div class="p-1.5 bg-slate-50/40">
+            <button
+              type="button"
+              @click="profileMenuOpen = false; handleSignOut();"
+              class="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition text-left group"
+            >
+              <div class="p-1.5 rounded-lg bg-rose-50 text-rose-500 group-hover:bg-rose-100 group-hover:text-rose-700 transition">
+                <LogOut class="w-4 h-4" />
+              </div>
+              <div>
+                <div class="font-semibold text-rose-700">Sign Out</div>
+                <div class="text-[10px] text-slate-400 font-normal">End your session on this device</div>
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div v-else class="flex items-center gap-3">

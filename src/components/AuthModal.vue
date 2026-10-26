@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { supabase } from '../supabase';
 import { Mail, Lock, KeyRound, ShieldCheck, AlertCircle, CheckCircle2, Sparkles, ArrowRight, X, Eye, EyeOff } from 'lucide-vue-next';
 
 const props = withDefaults(defineProps<{
-  mode?: 'normal' | 'recovery';
+  mode?: 'normal' | 'recovery' | 'reset';
+  initialEmail?: string;
 }>(), {
   mode: 'normal',
+  initialEmail: '',
 });
 
-const emit = defineEmits(['authenticated', 'close']);
+const emit = defineEmits(['authenticated', 'close', 'update:mode']);
 
 const activeTab = ref<'magic-link' | 'password'>('password');
-const email = ref('');
+const email = ref(props.initialEmail || '');
 const password = ref('');
 const confirmPassword = ref('');
 const showPassword = ref(false);
@@ -23,12 +25,27 @@ const isSignUp = ref(false);
 const isConfirmationSent = ref(false);
 const isResetSent = ref(false);
 const isRecoveryMode = ref(props.mode === 'recovery');
+const isResetFlow = ref(props.mode === 'reset');
 const resetNotice = ref<string | null>(null);
 const pendingPassword = ref('');
 
 const loading = ref(false);
 const errorMsg = ref<string | null>(null);
 const successMsg = ref<string | null>(null);
+
+watch(() => props.mode, (newMode) => {
+  isRecoveryMode.value = (newMode === 'recovery');
+  if (newMode === 'reset') {
+    isResetFlow.value = true;
+    isRecoveryMode.value = false;
+  }
+});
+
+watch(() => props.initialEmail, (newEmail) => {
+  if (newEmail && !email.value) {
+    email.value = newEmail;
+  }
+});
 
 // Validate if the email exists in the official league roster and is approved by Admin
 const isEmailWhitelisted = async (userEmail: string): Promise<{ valid: boolean; status?: 'not_found' | 'pending' | 'approved'; name?: string }> => {
@@ -150,7 +167,21 @@ const handleVerifyOtp = async () => {
       errorMsg.value = error.message;
     }
   } else {
-    // If setting a 1st time password during OTP verification
+    // 1. Password Reset Flow: Switch to Recovery Mode to choose new password
+    if (isResetFlow.value) {
+      isRecoveryMode.value = true;
+      isOtpSent.value = false;
+      showCodeInput.value = false;
+      otpCode.value = '';
+      password.value = '';
+      confirmPassword.value = '';
+      errorMsg.value = null;
+      successMsg.value = 'Identity verified! Please enter your new password below.';
+      emit('update:mode', 'recovery');
+      return;
+    }
+
+    // 2. If setting a 1st time password during OTP verification
     if (pendingPassword.value) {
       const { error: updateErr } = await supabase.auth.updateUser({
         password: pendingPassword.value,
@@ -193,6 +224,10 @@ const handleResetPassword = async () => {
     return;
   }
 
+  isResetFlow.value = true;
+  isRecoveryMode.value = false;
+  emit('update:mode', 'reset');
+
   const { error } = await supabase.auth.signInWithOtp({
     email: email.value.trim(),
     options: {
@@ -203,12 +238,18 @@ const handleResetPassword = async () => {
   loading.value = false;
 
   if (error) {
-    errorMsg.value = error.message;
+    isResetFlow.value = false;
+    emit('update:mode', 'normal');
+    if (error.message.toLowerCase().includes('rate limit')) {
+      errorMsg.value = 'Email sending limit reached. Please wait a few minutes before requesting another code.';
+    } else {
+      errorMsg.value = error.message;
+    }
   } else {
     isOtpSent.value = true;
     showCodeInput.value = true;
     activeTab.value = 'magic-link';
-    successMsg.value = `A 6-digit passcode has been sent to ${email.value.trim()}! Enter your code below to verify and log in.`;
+    successMsg.value = `A 6-digit reset passcode has been sent to ${email.value.trim()}! Enter your code below to verify your identity and set a new password.`;
   }
 };
 
@@ -217,7 +258,7 @@ const handlePasswordAuth = async () => {
   errorMsg.value = null;
   successMsg.value = null;
 
-  // Recovery Mode (Saving new password from email recovery link)
+  // Recovery Mode (Saving new password from email recovery link or OTP reset)
   if (isRecoveryMode.value) {
     if (!password.value.trim()) {
       errorMsg.value = 'Please enter your new password.';
@@ -245,9 +286,12 @@ const handlePasswordAuth = async () => {
     if (error) {
       errorMsg.value = error.message;
     } else {
+      isResetFlow.value = false;
+      isRecoveryMode.value = false;
+      emit('update:mode', 'normal');
       emit('authenticated', {
         type: 'password_created',
-        email: email.value.trim(),
+        email: email.value.trim() || props.initialEmail,
       });
     }
     return;
@@ -355,7 +399,7 @@ const handlePasswordAuth = async () => {
           <ShieldCheck class="w-7 h-7 text-white" />
         </div>
         <h2 class="text-xl font-bold">
-          {{ isRecoveryMode ? 'Set New Password' : 'League Portal Login' }}
+          {{ isRecoveryMode ? 'Set New Password' : (isResetFlow ? 'Reset Password' : 'League Portal Login') }}
         </h2>
         <p class="text-xs text-blue-100 mt-1">Indoor Winter Tennis League Roster Authentication</p>
       </div>
@@ -364,7 +408,7 @@ const handlePasswordAuth = async () => {
       <div v-if="!isConfirmationSent && !isResetSent && !isRecoveryMode" class="flex border-b border-slate-200 bg-slate-50">
         <button
           type="button"
-          @click="activeTab = 'magic-link'; errorMsg = null; successMsg = null; isSignUp = false;"
+          @click="activeTab = 'magic-link'; errorMsg = null; successMsg = null; isSignUp = false; isResetFlow = false; emit('update:mode', 'normal');"
           :class="activeTab === 'magic-link' ? 'border-blue-600 text-blue-600 bg-white font-semibold' : 'border-transparent text-slate-500 hover:text-slate-700'"
           class="flex-1 py-3 text-xs text-center border-b-2 transition flex items-center justify-center gap-1.5"
         >
@@ -373,7 +417,7 @@ const handlePasswordAuth = async () => {
         </button>
         <button
           type="button"
-          @click="activeTab = 'password'; errorMsg = null; successMsg = null;"
+          @click="activeTab = 'password'; errorMsg = null; successMsg = null; isResetFlow = false; emit('update:mode', 'normal');"
           :class="activeTab === 'password' ? 'border-blue-600 text-blue-600 bg-white font-semibold' : 'border-transparent text-slate-500 hover:text-slate-700'"
           class="flex-1 py-3 text-xs text-center border-b-2 transition flex items-center justify-center gap-1.5"
         >
@@ -406,7 +450,8 @@ const handlePasswordAuth = async () => {
         <div v-if="isRecoveryMode" class="space-y-3">
           <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-start gap-2">
             <KeyRound class="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-            <span>You opened a password setup email link. Enter your new password below to activate your account.</span>
+            <span v-if="isResetFlow">Identity verified via 6-digit passcode! Enter your new password below to update your account.</span>
+            <span v-else>Enter your new password below to update your account.</span>
           </div>
 
           <div>
@@ -453,6 +498,16 @@ const handlePasswordAuth = async () => {
             <span v-if="loading">Saving new password...</span>
             <span v-else>Save New Password & Sign In</span>
           </button>
+
+          <div class="text-center pt-1">
+            <button
+              type="button"
+              @click="emit('authenticated', { type: 'signed_in', email: email.trim() || props.initialEmail })"
+              class="text-xs text-slate-400 hover:text-slate-600"
+            >
+              Skip and continue to portal with current password →
+            </button>
+          </div>
         </div>
 
         <!-- TAB 1: Magic Link / OTP -->
@@ -492,16 +547,19 @@ const handlePasswordAuth = async () => {
               <Mail class="w-6 h-6" />
             </div>
             <div>
-              <h4 class="text-base font-bold text-slate-800">Check Your Email Inbox</h4>
+              <h4 class="text-base font-bold text-slate-800">
+                {{ isResetFlow ? 'Reset Passcode Sent' : 'Check Your Email Inbox' }}
+              </h4>
               <p class="text-xs text-slate-600 mt-1">
-                We sent a 6-digit passcode to <span class="font-semibold text-slate-800">{{ email }}</span>.
+                We sent a 6-digit {{ isResetFlow ? 'password reset passcode' : 'passcode' }} to <span class="font-semibold text-slate-800">{{ email }}</span>.
               </p>
               <div class="text-xs text-slate-600 mt-3 bg-emerald-50/80 p-3 rounded-xl border border-emerald-200 text-left space-y-1">
-                <p class="font-semibold text-emerald-900">How to log in:</p>
+                <p class="font-semibold text-emerald-900">{{ isResetFlow ? 'How to reset your password:' : 'How to log in:' }}</p>
                 <ol class="list-decimal list-inside space-y-1 text-[11px] text-emerald-800">
                   <li>Open the email from <strong>"Play League"</strong>.</li>
                   <li>Copy or note your <strong>6-digit passcode</strong>.</li>
-                  <li>Enter your 6-digit code below to log in.</li>
+                  <li v-if="isResetFlow">Enter your 6-digit code below to verify your identity and set a new password.</li>
+                  <li v-else>Enter your 6-digit code below to log in.</li>
                 </ol>
               </div>
             </div>
@@ -523,13 +581,13 @@ const handlePasswordAuth = async () => {
                 class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg transition"
               >
                 <span v-if="loading">Verifying passcode...</span>
-                <span v-else>Verify Passcode & Log In</span>
+                <span v-else>{{ isResetFlow ? 'Verify Code & Set New Password' : 'Verify Passcode & Log In' }}</span>
               </button>
             </div>
 
             <div class="flex flex-col gap-2 pt-1">
               <button
-                @click="isOtpSent = false; otpCode = '';"
+                @click="isOtpSent = false; otpCode = ''; isResetFlow = false; emit('update:mode', 'normal');"
                 class="text-xs text-slate-400 hover:text-slate-600"
               >
                 ← Back / Re-enter email

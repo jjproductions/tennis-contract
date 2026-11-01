@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { supabase } from '../supabase';
-import { CheckCircle2, AlertTriangle, UserPlus, Users, Pencil, X } from 'lucide-vue-next';
+import { CheckCircle2, AlertTriangle, UserPlus, Users, Pencil, X, Lock } from 'lucide-vue-next';
 import { notifyNewPlayerIntake } from '../utils/discordNotifier';
 
 interface PlayerRecord {
@@ -12,11 +12,13 @@ interface PlayerRecord {
   doubles_share: number;
   blackout_weeks: number[];
   blackout_days?: string[];
+  approved?: boolean;
 }
 
 const props = defineProps<{
   session?: any;
   isAdmin?: boolean;
+  hasPublishedSchedule?: boolean;
 }>();
 
 const emit = defineEmits(['registered']);
@@ -38,8 +40,22 @@ const currentUserEmail = computed<string>(() =>
   (props.session?.user?.email || '').toLowerCase()
 );
 
+const activeRosterPlayer = computed<PlayerRecord | undefined>(() => {
+  if (!currentUserEmail.value) return undefined;
+  return registeredPlayers.value.find(
+    (p) => p.email?.toLowerCase() === currentUserEmail.value && p.approved !== false
+  );
+});
+
+const isSelfLocked = computed<boolean>(() => {
+  if (props.isAdmin) return false;
+  return Boolean(props.hasPublishedSchedule && activeRosterPlayer.value);
+});
+
 const canEditPlayer = (p: PlayerRecord): boolean => {
   if (props.isAdmin) return true;
+  // If schedule is active and player is an approved member, commitments are fixed for non-admins
+  if (props.hasPublishedSchedule && p.approved !== false) return false;
   if (currentUserEmail.value && p.email?.toLowerCase() === currentUserEmail.value) return true;
   return false;
 };
@@ -101,18 +117,44 @@ const shareOptions = [
   { label: 'Double Share - 200% (48 matches)', value: 2.0 },
 ];
 
+// Helper to normalize and snap any numeric/string/floating point share to an exact number
+const snapToShare = (val: any): number => {
+  if (val === null || val === undefined || val === '') return 0;
+  const num = Number(val);
+  if (isNaN(num)) return 0;
+  const match = shareOptions.find((opt) => Math.abs(opt.value - num) < 0.005);
+  return match ? match.value : num;
+};
+
+// Generates option list ensuring any non-standard or legacy share value has a matching option in the select
+const getAvailableShareOptions = (currentVal: number) => {
+  const normalized = Number(currentVal ?? 0);
+  const exists = shareOptions.some((opt) => Math.abs(opt.value - normalized) < 0.005);
+  if (exists) {
+    return shareOptions;
+  }
+  const customOption = {
+    label: `Custom: ${formatSharePercentage(normalized)} (${formatShareMatches(normalized)} matches)`,
+    value: normalized,
+  };
+  return [...shareOptions, customOption].sort((a, b) => a.value - b.value);
+};
+
+const singlesShareOptions = computed(() => getAvailableShareOptions(singlesShare.value));
+const doublesShareOptions = computed(() => getAvailableShareOptions(doublesShare.value));
+
 const loadRoster = async () => {
   const { data } = await supabase
     .from('players')
-    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, blackout_days')
+    .select('id, full_name, email, singles_share, doubles_share, blackout_weeks, blackout_days, approved')
     .order('created_at', { ascending: true });
   if (data) {
     registeredPlayers.value = data;
 
-    // If signed in, check if user matches a registered player to auto-prefill
+    // If signed in, check if user matches a registered player to auto-prefill (only if allowed to edit)
     if (currentUserEmail.value && !editingPlayerId.value) {
       const userPlayer = data.find((p) => p.email.toLowerCase() === currentUserEmail.value);
-      if (userPlayer) {
+      if (userPlayer && canEditPlayer(userPlayer)) {
         editPlayer(userPlayer);
       }
     }
@@ -121,8 +163,11 @@ const loadRoster = async () => {
 
 const editPlayer = (p: PlayerRecord) => {
   if (!canEditPlayer(p)) {
+    const errorText = (props.hasPublishedSchedule && p.approved !== false && !props.isAdmin)
+      ? `Season schedule is active. Existing player commitments for ${p.full_name} are fixed. Please contact a League Admin to adjust.`
+      : `Permission denied: You can only edit your own preferences unless you are a League Admin.`;
     statusMessage.value = {
-      text: `Permission denied: You can only edit your own preferences unless you are a League Admin.`,
+      text: errorText,
       error: true,
     };
     return;
@@ -131,8 +176,8 @@ const editPlayer = (p: PlayerRecord) => {
   editingPlayerId.value = p.id || null;
   fullName.value = p.full_name;
   email.value = p.email;
-  singlesShare.value = p.singles_share;
-  doublesShare.value = p.doubles_share;
+  singlesShare.value = snapToShare(p.singles_share);
+  doublesShare.value = snapToShare(p.doubles_share);
   selectedBlackouts.value = [...(p.blackout_weeks || [])];
   selectedBlackoutDays.value = [...(p.blackout_days || [])];
   statusMessage.value = { text: `Loaded saved preferences for ${p.full_name}. Update below and click Save.` };
@@ -231,8 +276,11 @@ const handleRegister = async () => {
     const isAllowed = canEditPlayer(existingByName);
     if (!isAllowed) {
       isSubmitting.value = false;
+      const deniedMessage = (props.hasPublishedSchedule && existingByName.approved !== false && !props.isAdmin)
+        ? `Season schedule is active. Existing player commitments for ${existingByName.full_name} are fixed. Please contact a League Administrator to request changes.`
+        : `Permission denied: ${existingByName.full_name} is already registered. You cannot modify preferences for other players. Please sign in as ${existingByName.email} or contact an Admin.`;
       statusMessage.value = {
-        text: `Permission denied: ${existingByName.full_name} is already registered. You cannot modify preferences for other players. Please sign in as ${existingByName.email} or contact an Admin.`,
+        text: deniedMessage,
         error: true,
       };
       return;
@@ -255,13 +303,25 @@ const handleRegister = async () => {
     payload.approved = false;
   }
 
-  // Upsert on full_name so players can update preferences
-  const { error } = await supabase.from('players').upsert(payload, { onConflict: 'full_name' });
+  // If editing an existing player, update by primary key ID; otherwise insert/upsert new registration
+  let updateError: any = null;
+  if (editingPlayerId.value) {
+    const { error: err } = await supabase
+      .from('players')
+      .update(payload)
+      .eq('id', editingPlayerId.value);
+    updateError = err;
+  } else {
+    const { error: err } = await supabase
+      .from('players')
+      .upsert(payload, { onConflict: 'full_name' });
+    updateError = err;
+  }
 
   isSubmitting.value = false;
 
-  if (error) {
-    statusMessage.value = { text: error.message, error: true };
+  if (updateError) {
+    statusMessage.value = { text: updateError.message, error: true };
   } else {
     // Notify Discord admin channel
     const isUpdateAction = isSelfUpdate || props.isAdmin || !!editingPlayerId.value;
@@ -360,13 +420,58 @@ const handleRegister = async () => {
       </div>
     </div>
 
+    <!-- Active Player Confirmed Roster Commitments Card (When Season is Live) -->
+    <div v-if="isSelfLocked && activeRosterPlayer" class="bg-white p-5 rounded-xl border border-blue-200 bg-gradient-to-br from-white to-blue-50/30 shadow-sm space-y-3">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex items-start gap-3">
+          <div class="p-2.5 bg-blue-100 text-blue-700 rounded-xl flex-shrink-0 mt-0.5">
+            <Lock class="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <h3 class="text-sm font-bold text-slate-900">Your Season Commitments are Fixed</h3>
+              <span class="text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
+                Active Member
+              </span>
+            </div>
+            <p class="text-xs text-slate-600 mt-1 leading-relaxed">
+              The season schedule is live. Your share commitments and blackout dates are fixed to guarantee league operational balance. To offer your spot for a match, please use the Sub Board. To adjust contracted shares, contact a League Administrator.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-blue-100/80 text-xs">
+        <div class="p-2.5 bg-white/80 rounded-lg border border-slate-200/70">
+          <span class="text-[10px] text-slate-400 font-semibold block uppercase">Singles Share</span>
+          <span class="font-bold text-slate-900 text-sm">{{ formatSharePercentage(activeRosterPlayer.singles_share) }}</span>
+          <span class="text-[10px] text-slate-500 ml-1">({{ formatShareMatches(activeRosterPlayer.singles_share) }} matches)</span>
+        </div>
+        <div class="p-2.5 bg-white/80 rounded-lg border border-slate-200/70">
+          <span class="text-[10px] text-slate-400 font-semibold block uppercase">Doubles Share</span>
+          <span class="font-bold text-slate-900 text-sm">{{ formatSharePercentage(activeRosterPlayer.doubles_share) }}</span>
+          <span class="text-[10px] text-slate-500 ml-1">({{ formatShareMatches(activeRosterPlayer.doubles_share) }} matches)</span>
+        </div>
+        <div class="p-2.5 bg-white/80 rounded-lg border border-slate-200/70">
+          <span class="text-[10px] text-slate-400 font-semibold block uppercase">Blackout Days</span>
+          <span class="font-semibold text-slate-800">{{ activeRosterPlayer.blackout_days?.length ? activeRosterPlayer.blackout_days.join(', ') : 'None' }}</span>
+        </div>
+        <div class="p-2.5 bg-white/80 rounded-lg border border-slate-200/70">
+          <span class="text-[10px] text-slate-400 font-semibold block uppercase">Blackout Weeks</span>
+          <span class="font-semibold text-slate-800">{{ activeRosterPlayer.blackout_weeks?.length ? getBlackoutWeekRanges(activeRosterPlayer.blackout_weeks).join(', ') : 'None' }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Intake Form -->
     <div id="intake-form-card" class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm transition-all" :class="editingPlayerId ? 'ring-2 ring-blue-500 bg-blue-50/20' : ''">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
-          <Pencil v-if="editingPlayerId" class="w-5 h-5 text-amber-600" />
+          <Pencil v-if="editingPlayerId && props.isAdmin" class="w-5 h-5 text-amber-600" />
           <UserPlus v-else class="w-5 h-5 text-blue-600" />
-          {{ editingPlayerId ? `Editing Preferences: ${fullName}` : 'Player Intake & Share Preferences' }}
+          <span v-if="editingPlayerId && props.isAdmin">Admin Override: Editing Preferences for {{ fullName }}</span>
+          <span v-else-if="props.hasPublishedSchedule">New Player Intake & Substitute Pool Registration</span>
+          <span v-else>Player Intake & Share Preferences</span>
         </h2>
 
         <button
@@ -377,6 +482,11 @@ const handleRegister = async () => {
           <X class="w-3.5 h-3.5" />
           Cancel Editing
         </button>
+      </div>
+
+      <div v-if="props.hasPublishedSchedule && !editingPlayerId" class="mb-4 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center gap-2 font-medium">
+        <Users class="w-4 h-4 text-blue-600 flex-shrink-0" />
+        <span>The season schedule is active. New submissions will be placed in the Substitute Pool & Waitlist for Admin approval.</span>
       </div>
 
       <div class="space-y-4">
@@ -408,7 +518,7 @@ const handleRegister = async () => {
               v-model="singlesShare"
               class="w-full border rounded-lg p-2 text-sm border-slate-300 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option v-for="opt in shareOptions" :key="opt.value" :value="opt.value">
+              <option v-for="opt in singlesShareOptions" :key="opt.value" :value="opt.value">
                 {{ opt.label }}
               </option>
             </select>
@@ -419,7 +529,7 @@ const handleRegister = async () => {
               v-model="doublesShare"
               class="w-full border rounded-lg p-2 text-sm border-slate-300 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option v-for="opt in shareOptions" :key="opt.value" :value="opt.value">
+              <option v-for="opt in doublesShareOptions" :key="opt.value" :value="opt.value">
                 {{ opt.label }}
               </option>
             </select>
@@ -477,7 +587,7 @@ const handleRegister = async () => {
             class="flex-1 py-2.5 px-4 text-white font-semibold text-sm rounded-lg shadow-sm transition disabled:opacity-50"
             :class="editingPlayerId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'"
           >
-            {{ isSubmitting ? 'Saving...' : editingPlayerId ? 'Save Updated Preferences' : 'Submit Preferences' }}
+            {{ isSubmitting ? 'Saving...' : editingPlayerId ? 'Save Updated Preferences' : props.hasPublishedSchedule ? 'Submit Application for Admin Review' : 'Submit Preferences' }}
           </button>
           <button
             v-if="editingPlayerId"
@@ -572,6 +682,14 @@ const handleRegister = async () => {
                 <Pencil class="w-3 h-3" />
                 {{ editingPlayerId === p.id ? 'Editing...' : 'Edit' }}
               </button>
+              <span
+                v-else-if="props.hasPublishedSchedule && p.approved !== false"
+                class="inline-flex items-center gap-1 text-[10px] text-slate-400 font-semibold px-2 py-0.5 bg-slate-100 rounded border border-slate-200/80"
+                title="Commitments are locked while season schedule is active"
+              >
+                <Lock class="w-2.5 h-2.5 text-slate-400" />
+                Fixed
+              </span>
               <span v-else class="text-[11px] text-slate-300 italic select-none">
                 —
               </span>

@@ -14,10 +14,12 @@ A comprehensive, self-service web portal built for indoor winter tennis contract
 - **Dual Blackout Preferences**:
   - **Day-of-Week Blackouts**: Players toggle specific days they cannot play (e.g., *Mondays*, *Wednesdays*).
   - **Weekly Blackouts**: Interactive multi-week picker (Weeks 1–24) with smart consecutive range compression (e.g., `W13–17`).
-- **Interactive Roster Table**:
+- **Interactive Roster Table & Post-Launch Quota Lockdown**:
   - Automatically sorted alphabetically by player last name, with 0-share members grouped at the bottom.
   - Formatted badge pills for blackout days and weeks.
-  - Self-service editing allows players to update their own preferences, while league administrators maintain override permissions for all players.
+  - **Active Season Roster Lockdown**: Once the season schedule is published and live, existing approved players' shares and blackout dates are fixed (`Fixed` status badge in the roster table). An Active Member summary card displays their confirmed season commitments and guides players to use the Sub Board for match coverage.
+  - **Substitute Pool & Waitlist Intake**: New players can still submit an intake registration mid-season; submissions enter the Substitute Pool & Waitlist with `approved: false` pending admin review, continuously expanding the sub pool without disrupting court capacities.
+  - **Admin Override Authority**: League administrators maintain override permissions to modify any player's commitments or approve waitlist members at any time.
 
 ### 🔐 Authentication & Roster Whitelist Gate
 - **Official Roster Whitelist**: Sign-in is strictly verified against the approved `players` database table.
@@ -49,6 +51,7 @@ A comprehensive, self-service web portal built for indoor winter tennis contract
 - **Dynamic Season-Long Capacity Balancing**: Dynamically balances weekly Singles vs. Doubles court allocations to match total registered share demand.
 - **Post-Processing Quota Swap Pass**: An iterative optimization pass that analyzes the generated schedule to identify under-allocated players and swaps them into slots occupied by over-allocated players without violating any constraints.
 - **One-Click Publishing & Live Sync**: Preview court distribution and quota compliance summaries before committing the schedule directly to Supabase with real-time Discord league broadcasts.
+- **Active Season Schedule Shield**: When matches already exist in Supabase, the publish button dynamically switches to **"Overwrite Active Schedule"** (amber alert styling). Attempting to re-publish an active season triggers a high-friction safety modal requiring the admin to explicitly type **`CONFIRM OVERWRITE`** before the 24-week schedule, fixtures, and sub history can be erased.
 
 ### 🔄 Match Schedule & Sub Management
 - **Interactive Match Views & Smart Navigation**:
@@ -100,7 +103,7 @@ League administrators can toggle between two operational modes in **League Setti
   - **Player Registrations**: Review and approve new intake applicants before granting login access.
   - **Manual Auto-Draft Trigger**: Execute an on-demand auto-draft run with instant status reporting.
 - **Roster Management**: Manage player roles (Admin vs. Player), modify share allocations, and adjust blackout preferences.
-- **Schedule Generator Modal**: Complete schedule generation suite with customizable court parameters, date exclusions, and direct database publication.
+- **Schedule Generator Modal**: Complete schedule generation suite with customizable court parameters, date exclusions, direct database publication, and high-friction overwrite safeguards.
 - **Discord Notification Center**: Dispatch custom announcements and test webhook integrations across public and admin channels.
 - **League Settings**: Toggle between Auto-Draft and Admin Assists operational flows.
 

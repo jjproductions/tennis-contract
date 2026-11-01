@@ -12,7 +12,7 @@ import {
   type ScheduleGenResult,
   type DayCourtConfig,
 } from '../utils/scheduleGenerator';
-import { Calendar, Play, CheckCircle2, AlertCircle, RefreshCw, Layers, ShieldCheck, UserCheck, Sparkles, AlertTriangle, Pin, Download, ChevronDown, FileText, FileSpreadsheet, FileCode } from 'lucide-vue-next';
+import { Calendar, Play, CheckCircle2, AlertCircle, RefreshCw, Layers, ShieldCheck, UserCheck, Sparkles, AlertTriangle, Pin, Download, ChevronDown, FileText, FileSpreadsheet, FileCode, ShieldAlert, X } from 'lucide-vue-next';
 import { notifySchedulePublished } from '../utils/discordNotifier';
 import { exportDraftSchedulePDF, exportDraftScheduleExcel, exportDraftScheduleCSV } from '../utils/exportUtils';
 
@@ -24,8 +24,25 @@ const emit = defineEmits(['scheduled']);
 
 const startDate = ref<string>('2026-10-19'); // Default to Monday
 const excludedDatesInput = ref<string>(''); // For holidays/closed dates
+const existingMatchesCount = ref<number>(0);
+const overwriteModalOpen = ref<boolean>(false);
+const confirmInputText = ref<string>('');
+
+const checkExistingMatches = async () => {
+  try {
+    const { count, error } = await supabase
+      .from('matches')
+      .select('id', { count: 'exact', head: true });
+    if (!error && count !== null) {
+      existingMatchesCount.value = count;
+    }
+  } catch (err) {
+    console.error('Failed to check existing matches', err);
+  }
+};
 
 onMounted(async () => {
+  await checkExistingMatches();
   try {
     const { data } = await supabase
       .from('league_settings')
@@ -220,10 +237,25 @@ const handleGenerate = () => {
 const handlePublish = async () => {
   if (!generatedResult.value) return;
 
-  if (!confirm('Are you sure you want to publish this schedule to Supabase? This will clear any existing matches and publish the new 24-week schedule.')) {
+  // Refresh current count of existing matches in Supabase
+  await checkExistingMatches();
+
+  if (existingMatchesCount.value > 0) {
+    confirmInputText.value = '';
+    overwriteModalOpen.value = true;
     return;
   }
 
+  if (!confirm('Are you sure you want to publish this schedule to Supabase? This will save the new 24-week schedule.')) {
+    return;
+  }
+
+  await executePublish();
+};
+
+const executePublish = async () => {
+  if (!generatedResult.value) return;
+  overwriteModalOpen.value = false;
   isPublishing.value = true;
   statusMessage.value = null;
 
@@ -287,6 +319,7 @@ const handlePublish = async () => {
 
     statusMessage.value = { text: '24-Week Schedule successfully generated and published to Supabase!' };
     isPublishing.value = false;
+    await checkExistingMatches();
 
     // Trigger Discord notification for published schedule
     notifySchedulePublished({
@@ -649,11 +682,13 @@ const getWeekBadgeText = (w: number) => {
             <button
               @click="handlePublish"
               :disabled="isPublishing"
-              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 disabled:opacity-50"
+              class="px-4 py-2 text-white font-bold text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 disabled:opacity-50"
+              :class="existingMatchesCount > 0 ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'"
             >
               <RefreshCw v-if="isPublishing" class="w-3.5 h-3.5 animate-spin" />
+              <AlertTriangle v-else-if="existingMatchesCount > 0" class="w-3.5 h-3.5" />
               <CheckCircle2 v-else class="w-3.5 h-3.5" />
-              Publish Schedule to Supabase
+              <span>{{ existingMatchesCount > 0 ? 'Overwrite Active Schedule' : 'Publish Schedule to Supabase' }}</span>
             </button>
           </div>
         </div>
@@ -821,6 +856,77 @@ const getWeekBadgeText = (w: number) => {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Season Schedule Overwrite Confirmation Modal -->
+    <div
+      v-if="overwriteModalOpen"
+      class="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+    >
+      <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-rose-200 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="p-3 bg-rose-100 text-rose-700 rounded-xl flex-shrink-0">
+            <ShieldAlert class="w-6 h-6 text-rose-600" />
+          </div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-base font-bold text-slate-900">Active Season Schedule Detected</h3>
+              <button
+                type="button"
+                @click="overwriteModalOpen = false; confirmInputText = '';"
+                class="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition"
+              >
+                <X class="w-5 h-5" />
+              </button>
+            </div>
+            <p class="text-xs text-rose-700 font-semibold mt-1">
+              DANGER: This action cannot be undone!
+            </p>
+          </div>
+        </div>
+
+        <div class="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-xs text-rose-900 space-y-2">
+          <p class="font-medium">
+            There are currently <strong class="font-bold underline">{{ existingMatchesCount }} matches</strong> active in the database.
+          </p>
+          <p class="text-rose-800 leading-relaxed">
+            Re-publishing will <strong class="font-bold">permanently delete all 24 weeks</strong> of fixtures, court assignments, substitute rankings, and sub history.
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+            To confirm deletion and rewrite the entire active season, type <strong class="text-rose-600 font-mono select-all">CONFIRM OVERWRITE</strong> below:
+          </label>
+          <input
+            v-model="confirmInputText"
+            type="text"
+            placeholder="CONFIRM OVERWRITE"
+            class="w-full border-2 rounded-lg p-2 text-sm font-mono tracking-wider focus:outline-none transition uppercase"
+            :class="confirmInputText === 'CONFIRM OVERWRITE' ? 'border-rose-500 bg-rose-50/30' : 'border-slate-300 focus:border-rose-400'"
+          />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button
+            type="button"
+            @click="overwriteModalOpen = false; confirmInputText = '';"
+            class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            @click="executePublish"
+            :disabled="confirmInputText !== 'CONFIRM OVERWRITE' || isPublishing"
+            class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <RefreshCw v-if="isPublishing" class="w-3.5 h-3.5 animate-spin" />
+            <ShieldAlert v-else class="w-3.5 h-3.5" />
+            Wipe & Overwrite Active Season
+          </button>
         </div>
       </div>
     </div>

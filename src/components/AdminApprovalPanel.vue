@@ -21,8 +21,10 @@ import {
   Clock,
   Sliders,
   AlertTriangle,
+  BarChart3,
 } from 'lucide-vue-next';
 import ScheduleGeneratorModal from './ScheduleGeneratorModal.vue';
+import PlayerReportsView from './PlayerReportsView.vue';
 import {
   testDiscordWebhook,
   sendCustomBroadcast,
@@ -93,7 +95,7 @@ const emit = defineEmits(['updated']);
 const allPlayers = ref<PlayerRecord[]>([]);
 const processingId = ref<string | null>(null);
 const actionError = ref<string | null>(null);
-const activeTab = ref<'pending' | 'roster' | 'generator' | 'discord' | 'settings'>('pending');
+const activeTab = ref<'pending' | 'roster' | 'generator' | 'discord' | 'settings' | 'reports'>('pending');
 
 // Sub Requests State
 const subRequests = ref<SubRequestRanking[]>([]);
@@ -501,6 +503,14 @@ const handleTriggerAutoDraft = async () => {
         >
           <Settings2 class="w-3.5 h-3.5" />
           League Settings
+        </button>
+        <button
+          @click="activeTab = 'reports'"
+          :class="activeTab === 'reports' ? 'bg-blue-600 text-white font-bold' : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border-slate-200'"
+          class="text-xs px-3 py-1 rounded-lg border transition flex items-center gap-1.5"
+        >
+          <BarChart3 class="w-3.5 h-3.5" />
+          Player Analytics
         </button>
       </div>
 
@@ -1113,6 +1123,11 @@ const handleTriggerAutoDraft = async () => {
           <span>{{ autoDraftStatus.text }}</span>
         </div>
       </div>
+    </div>
+
+    <!-- TAB 6: PLAYER REPORTS & ANALYTICS -->
+    <div v-else-if="activeTab === 'reports'" class="pt-4">
+      <PlayerReportsView />
     </div>
   </div>
 </template>

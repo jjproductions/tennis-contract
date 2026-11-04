@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { supabase } from './supabase';
-import { AlertCircle, CheckCircle2, LogOut, ShieldCheck, LogIn, X, KeyRound } from 'lucide-vue-next';
+import { AlertCircle, CheckCircle2, LogOut, ShieldCheck, LogIn, X, KeyRound, BarChart3 } from 'lucide-vue-next';
 import PlayerIntake from './components/PlayerIntake.vue';
 import AuthModal from './components/AuthModal.vue';
 import AdminApprovalPanel from './components/AdminApprovalPanel.vue';
 import MatchScheduleView from './components/MatchScheduleView.vue';
+import PlayerReportsView from './components/PlayerReportsView.vue';
 import { notifySubRequested, notifySubClaimed } from './utils/discordNotifier';
 import { compareMatches } from './utils/scheduleGenerator';
 
@@ -48,7 +49,7 @@ const authModalMode = ref<'normal' | 'recovery' | 'reset'>('normal');
 const allSlots = ref<MatchSlotView[]>([]);
 const loading = ref<boolean>(true);
 const notification = ref<NotificationState | null>(null);
-const currentView = ref<'intake' | 'schedule' | 'admin'>('schedule');
+const currentView = ref<'intake' | 'schedule' | 'admin' | 'reports'>('schedule');
 const profileMenuOpen = ref<boolean>(false);
 const profileDropdownRef = ref<HTMLElement | null>(null);
 
@@ -90,7 +91,7 @@ const resolvePlayerIdentity = async () => {
     activePlayer.value = null;
   }
 
-  if (!isAdmin.value && currentView.value === 'admin') {
+  if (!isAdmin.value && (currentView.value === 'admin' || currentView.value === 'reports')) {
     currentView.value = 'schedule';
   }
 };
@@ -102,7 +103,7 @@ const handleSignOut = async () => {
   activePlayerId.value = '';
   activePlayerName.value = '';
   isAdmin.value = false;
-  if (currentView.value === 'admin') {
+  if (currentView.value === 'admin' || currentView.value === 'reports') {
     currentView.value = 'schedule';
   }
   notification.value = { text: 'Signed out successfully.' };
@@ -448,6 +449,15 @@ const claimSlot = async (slotId: string, playerId?: string) => {
       </button>
       <button
         v-if="session && isAdmin"
+        @click="currentView = 'reports'; notification = null;"
+        :class="currentView === 'reports' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
+        class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition flex items-center gap-1.5"
+      >
+        <BarChart3 class="w-3.5 h-3.5" />
+        <span>Player Reports</span>
+      </button>
+      <button
+        v-if="session && isAdmin"
         @click="currentView = 'admin'; notification = null;"
         :class="currentView === 'admin' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
         class="text-xs font-semibold px-4 py-2 rounded-lg border border-slate-200 transition flex items-center gap-2"
@@ -531,6 +541,11 @@ const claimSlot = async (slotId: string, playerId?: string) => {
       v-else-if="currentView === 'admin' && session && isAdmin"
       :pendingPlayers="pendingPlayers"
       @updated="loadData"
+    />
+
+    <!-- View 4: Player Reports -->
+    <PlayerReportsView
+      v-else-if="currentView === 'reports' && session && isAdmin"
     />
   </main>
 </template>

@@ -1,6 +1,6 @@
 # Indoor Winter Tennis Contract & Schedule Manager 🎾
 
-A comprehensive, self-service web portal built for indoor winter tennis contract leagues. Designed to streamline player intake and commitment tracking, automated multi-court schedule generation with a modular Rules & Priorities engine, bilateral Karma-based substitute rankings, auto-drafting, and secure Discord notifications proxied via Cloudflare Workers and KV.
+A comprehensive, self-service web portal built for indoor winter tennis contract leagues. Designed to streamline player intake and commitment tracking, automated multi-court schedule generation with a modular Rules & Priorities engine, bilateral Karma-based substitute rankings, auto-drafting, executive player quota and season analytics reporting with multi-format PDF/CSV exports, and secure Discord notifications proxied via Cloudflare Workers and KV.
 
 ---
 
@@ -92,12 +92,39 @@ League administrators can toggle between two operational modes in **League Setti
    - All candidate requests are aggregated in the Admin Approval Hub with candidate rankings and conflict alerts.
    - The administrator reviews candidates and clicks **Approve Sub** to select the winning player.
 
+### 📈 Player Quota & Season Analytics Dashboard
+- **Executive KPI Cards**: Real-time league-wide summary metrics tracking:
+  - **Quota Delivery Health**: Percentage of contracted members currently projected on track or ahead of their share commitments.
+  - **Quota Deficit Alert**: Real-time count of players who have dropped below their contracted share (e.g. due to unfulfilled sub-outs or under-allocation).
+  - **Total Substitutions**: League-wide substitution volume and match turnover.
+  - **Pending Karma Favors**: Active sub requests where an applicant is owed a return match.
+- **Granular Player Performance Table**:
+  - **Contract Share Breakdown**: Granular Singles and Doubles target quotas calculated from registered shares.
+  - **Singles vs. Doubles Delivery**: Visual dual-color progress bars comparing scheduled singles and doubles fixtures against contracted quotas.
+  - **Projection-Driven Quota Status**: Clean health badges driven by season-long projected totals (`🟢 On Track (100%)`, `🔴 N Deficit`, `🟣 +N Surplus`, `⚪ Sub Pool`), paired with progress subtitles (`X played • Y upcoming`) to eliminate false alarms from blackout or rest weeks.
+  - **Sub Turnover Tracking**: Live tracking of matches subbed out, matches subbed in, and net substitution differential.
+  - **Bilateral Karma Ledger**: Community favor balance scores (`+N Favors Owed` vs `N Favors Due`) and highlights for pending requests owed.
+  - **Inactivity & Calendar Anchors**: Longest consecutive idle streak (in weeks), plus Last Match and Next Match dates.
+- **Interactive Search & Presets**:
+  - Real-time search across player names and emails.
+  - One-click filter pills: `All Players`, `⚠️ In Deficit`, `⭐ Has Owed Favors`, `🔄 High Turnover (>25%)`, `Singles Focus`, `Doubles Focus`, and `Sub Pool / Waitlist`.
+  - Multi-column ascending and descending sorting.
+- **Expandable Player Deep-Dive Drawer**:
+  - **Active Scheduled Matches**: Chronological schedule of confirmed fixtures categorized by completed vs. upcoming.
+  - **Sub Exchange Log**: Comprehensive itemized log of all subbed-out matches (distinguishing between matches claimed by specific players vs. slots currently listed as `⏳ Open Sub` on the board) and subbed-in matches (highlighting who the player filled in for).
+  - **Bilateral Sub Karma Network**: Bilateral ledger showing head-to-head favor balances with specific trading partners.
+  - **Opponent Variety & Constraints**: Unique opponents faced count, blackout burden percentage, and exact blackout days and weeks.
+
 ### 📊 Export & Reporting Suite
 - **Multi-Format Schedule Export**: Export draft and published schedules to **PDF**, **Excel (`.xls`)**, and **CSV**.
+- **Player Quota & Analytics Exports**:
+  - **Executive Landscape PDF (`.pdf`)**: Generates a landscape A4 executive audit report with league title, active week KPI summary banner, styled table headers, and color-coded status badges (`jspdf` and `jspdf-autotable`).
+  - **Complete Player Metrics CSV (`.csv`)**: Spreadsheet-ready export containing all player metrics, share quotas, singles/doubles breakdowns, quota variances, sub turnovers, karma balances, and idle streaks.
 - **Quota Compliance Audit Table**: Exported documents and draft previews include an audit table comparing each player's target matches, scheduled matches, and blackout counts.
 - **Code-Split Dynamic Imports**: `jspdf` and `jspdf-autotable` are loaded on demand to maintain lightweight bundle sizes and instant initial page loads.
 
 ### 🛡️ Admin Control Panel
+- **Player Analytics Suite**: Direct access to the Player Quota & Season Analytics dashboard with multi-format export tools (accessible via top navigation and Admin Portal tabs).
 - **Pending Approvals Hub**:
   - **Sub Slot Requests**: Fixture-grouped overview of all open sub slots and applicant pools, with Karma indicators, rule conflict warnings, and one-click approvals.
   - **Player Registrations**: Review and approve new intake applicants before granting login access.

@@ -305,33 +305,68 @@ export async function notifyNewPlayerIntake(
     blackout_weeks: number[];
     blackout_days?: string[];
   },
-  isUpdate = false
+  isUpdate = false,
+  updatedBy?: string
 ): Promise<void> {
   await fetchGlobalDiscordSettings();
   if (!hasWebhookConfigured() || !isNotificationEnabled('new_player_intake')) return;
 
-  const embed: DiscordEmbed = {
-    title: isUpdate ? '✏️ Player Preferences Updated' : '📝 New Player Registration Received',
-    url: APP_URL,
-    description: isUpdate
+  const isOnBehalfOf = Boolean(
+    updatedBy &&
+    updatedBy.trim().toLowerCase() !== player.full_name.trim().toLowerCase()
+  );
+
+  let title = isUpdate ? '✏️ Player Preferences Updated' : '📝 New Player Registration Received';
+  if (isOnBehalfOf) {
+    title = isUpdate
+      ? '✏️ Player Preferences Updated (Admin Override)'
+      : '📝 New Player Registration (Admin Entry)';
+  }
+
+  let description = '';
+  if (isOnBehalfOf) {
+    description = isUpdate
+      ? `**${updatedBy}** updated league preferences & blackout dates on behalf of **${player.full_name}**.`
+      : `**${updatedBy}** has submitted registration details on behalf of **${player.full_name}** for the Winter Tennis season!`;
+  } else {
+    description = isUpdate
       ? `**${player.full_name}** has updated their league preferences & blackout dates.`
-      : `**${player.full_name}** has submitted registration details for the Winter Tennis season!`,
-    color: isUpdate ? 0x6366f1 : 0x3b82f6, // Indigo for updates, Blue for new
-    fields: [
-      { name: 'Player Name', value: player.full_name, inline: true },
-      { name: 'Singles Share', value: `${(player.singles_share * 100 % 1 === 0 ? (player.singles_share * 100).toFixed(0) : (player.singles_share * 100).toFixed(1))}% (${Math.round(player.singles_share * 24)} matches)`, inline: true },
-      { name: 'Doubles Share', value: `${(player.doubles_share * 100 % 1 === 0 ? (player.doubles_share * 100).toFixed(0) : (player.doubles_share * 100).toFixed(1))}% (${Math.round(player.doubles_share * 24)} matches)`, inline: true },
-      {
-        name: 'Blackout Weeks',
-        value: player.blackout_weeks?.length ? player.blackout_weeks.map(w => `Week ${w}`).join(', ') : 'None',
-        inline: true,
-      },
-      {
-        name: 'Blackout Days',
-        value: player.blackout_days?.length ? player.blackout_days.join(', ') : 'None',
-        inline: true,
-      },
-    ],
+      : `**${player.full_name}** has submitted registration details for the Winter Tennis season!`;
+  }
+
+  const fields: DiscordEmbedField[] = [
+    { name: 'Player Name', value: player.full_name, inline: true },
+  ];
+
+  if (isOnBehalfOf && updatedBy) {
+    fields.push({
+      name: isUpdate ? 'Updated By' : 'Submitted By',
+      value: `🛠️ ${updatedBy} (Admin • on behalf of ${player.full_name})`,
+      inline: true,
+    });
+  }
+
+  fields.push(
+    { name: 'Singles Share', value: `${(player.singles_share * 100 % 1 === 0 ? (player.singles_share * 100).toFixed(0) : (player.singles_share * 100).toFixed(1))}% (${Math.round(player.singles_share * 24)} matches)`, inline: true },
+    { name: 'Doubles Share', value: `${(player.doubles_share * 100 % 1 === 0 ? (player.doubles_share * 100).toFixed(0) : (player.doubles_share * 100).toFixed(1))}% (${Math.round(player.doubles_share * 24)} matches)`, inline: true },
+    {
+      name: 'Blackout Weeks',
+      value: player.blackout_weeks?.length ? player.blackout_weeks.map(w => `Week ${w}`).join(', ') : 'None',
+      inline: true,
+    },
+    {
+      name: 'Blackout Days',
+      value: player.blackout_days?.length ? player.blackout_days.join(', ') : 'None',
+      inline: true,
+    },
+  );
+
+  const embed: DiscordEmbed = {
+    title,
+    url: APP_URL,
+    description,
+    color: isOnBehalfOf ? 0xF59E0B : (isUpdate ? 0x6366f1 : 0x3b82f6), // Amber for Admin Override, Indigo for updates, Blue for new
+    fields,
   };
 
   await sendDiscordPayload(embed, 'admin');

@@ -19,6 +19,7 @@ const props = defineProps<{
   session?: any;
   isAdmin?: boolean;
   hasPublishedSchedule?: boolean;
+  activePlayerName?: string;
 }>();
 
 const emit = defineEmits(['registered']);
@@ -45,6 +46,18 @@ const activeRosterPlayer = computed<PlayerRecord | undefined>(() => {
   return registeredPlayers.value.find(
     (p) => p.email?.toLowerCase() === currentUserEmail.value && p.approved !== false
   );
+});
+
+const editorName = computed<string>(() => {
+  if (props.activePlayerName?.trim()) return props.activePlayerName.trim();
+  if (activeRosterPlayer.value?.full_name?.trim()) return activeRosterPlayer.value.full_name.trim();
+  if (currentUserEmail.value) {
+    const matched = registeredPlayers.value.find(
+      (p) => p.email?.toLowerCase() === currentUserEmail.value
+    );
+    if (matched?.full_name?.trim()) return matched.full_name.trim();
+  }
+  return props.isAdmin ? 'League Admin' : '';
 });
 
 const isSelfLocked = computed<boolean>(() => {
@@ -324,7 +337,11 @@ const handleRegister = async () => {
     statusMessage.value = { text: updateError.message, error: true };
   } else {
     // Notify Discord admin channel
-    const isUpdateAction = isSelfUpdate || props.isAdmin || !!editingPlayerId.value;
+    const isExistingPlayer = Boolean(editingPlayerId.value || existingByName);
+    const isUpdateAction = isExistingPlayer;
+    const isActorAdminOnBehalf = Boolean(props.isAdmin && !isSelfUpdate);
+    const updatedBy = isActorAdminOnBehalf ? editorName.value : undefined;
+
     notifyNewPlayerIntake(
       {
         full_name: payload.full_name,
@@ -334,10 +351,13 @@ const handleRegister = async () => {
         blackout_weeks: payload.blackout_weeks,
         blackout_days: payload.blackout_days,
       },
-      isUpdateAction
+      isUpdateAction,
+      updatedBy
     );
 
-    if (isSelfUpdate || props.isAdmin) {
+    if (isActorAdminOnBehalf) {
+      statusMessage.value = { text: `Preferences saved on behalf of ${fullName.value}!` };
+    } else if (isSelfUpdate || props.isAdmin) {
       statusMessage.value = { text: `Preferences saved successfully for ${fullName.value}!` };
     } else {
       statusMessage.value = { text: `Registration submitted for ${fullName.value}! Your submission is currently pending Admin approval.` };

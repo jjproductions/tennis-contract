@@ -532,6 +532,7 @@ const claimSlot = async (slotId: string, playerId?: string) => {
       v-else-if="currentView === 'intake'"
       :session="session"
       :is-admin="isAdmin"
+      :active-player-name="activePlayerName"
       :has-published-schedule="allSlots.length > 0"
       @registered="loadData"
     />

@@ -19,7 +19,10 @@ import {
   ShieldCheck,
   Info,
   Check,
-  ArrowRightLeft
+  ArrowRightLeft,
+  BookOpen,
+  Printer,
+  X
 } from 'lucide-vue-next';
 import { formatDayOfWeek } from '../utils/scheduleGenerator';
 import {
@@ -82,6 +85,11 @@ const expandedPlayerId = ref<string | null>(null);
 
 const exportLoading = ref<boolean>(false);
 const exportNotification = ref<string | null>(null);
+const guideModalOpen = ref<boolean>(false);
+
+const printGuide = () => {
+  window.print();
+};
 
 // Current date and dynamic week
 const todayStr = computed<string>(() => {
@@ -307,10 +315,24 @@ const calculatedMetrics = computed<PlayerReportMetric[]>(() => {
     }
 
     // Pending requests & Owed requests
-    const playerPendingReqs = pendingSubRequests.value.filter(
-      (r) => r.requesting_player_id === pId
-    );
-    const pending_sub_requests_count = playerPendingReqs.length;
+    // A truly active in-flight sub claim is a PENDING request on a slot that is currently OPEN_SUB on an upcoming match date
+    const inFlightSubClaims = pendingSubRequests.value.filter((r) => {
+      if (r.requesting_player_id !== pId) return false;
+      const slot = allSlots.value.find((s) => s.slot_id === r.slot_id);
+      return slot && slot.status === 'OPEN_SUB' && slot.match_date >= today;
+    });
+    const pending_sub_requests_count = inFlightSubClaims.length;
+
+    // Debug tracking for non-contract members (e.g. Bagby)
+    if (player.full_name?.toLowerCase().includes('bagby')) {
+      console.log('[PlayerReportsView] Bagby filter check:', {
+        total_share,
+        times_subbed_in,
+        scheduled_total,
+        pending_sub_requests_count,
+        rawPendingRequests: pendingSubRequests.value.filter((r) => r.requesting_player_id === pId),
+      });
+    }
 
     // Find pending requests where is_owed_match = true
     const pending_owed_requests_count = subRankings.value.filter(
@@ -430,6 +452,18 @@ const calculatedMetrics = computed<PlayerReportMetric[]>(() => {
       unique_opponents_count: opponentsSet.size,
       unique_partners_count: partnersSet.size,
     };
+  })
+  .filter((m) => {
+    // Contracted players with shares are always included
+    if (m.total_share > 0) return true;
+    // Players with no shares (0S / 0D) are only included if:
+    // 1. They have already subbed (or are currently scheduled in a sub slot), OR
+    // 2. A sub claim is in flight on an upcoming open sub slot
+    return (
+      m.times_subbed_in > 0 ||
+      m.scheduled_total > 0 ||
+      m.pending_sub_requests_count > 0
+    );
   });
 });
 
@@ -689,6 +723,16 @@ const handleExportPDF = async () => {
           >
             <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': loading }" />
             <span>Refresh</span>
+          </button>
+
+          <button
+            type="button"
+            @click="guideModalOpen = true"
+            class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center gap-1.5"
+            title="Open Admin User Guide"
+          >
+            <BookOpen class="w-4 h-4" />
+            <span>Admin Guide</span>
           </button>
 
           <button
@@ -1359,5 +1403,332 @@ const handleExportPDF = async () => {
         </table>
       </div>
     </div>
+
+    <!-- 📖 In-App Admin Guide Modal -->
+    <div
+      v-if="guideModalOpen"
+      class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in"
+      @click.self="guideModalOpen = false"
+    >
+      <div
+        class="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col print-guide-container"
+      >
+        <!-- Modal Header -->
+        <div class="p-5 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white flex items-center justify-between flex-shrink-0">
+          <div class="flex items-center gap-2.5">
+            <div class="p-2 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-400/30">
+              <BookOpen class="w-5 h-5" />
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] font-black uppercase tracking-wider bg-blue-500/30 text-blue-200 px-2 py-0.5 rounded-full border border-blue-400/30">
+                  Documentation & SOP
+                </span>
+                <span class="text-xs text-slate-400 hidden sm:inline">Winter Tennis League</span>
+              </div>
+              <h3 class="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
+                Administrator’s Guide: Player Quota & Season Analytics
+              </h3>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 no-print">
+            <button
+              type="button"
+              @click="printGuide"
+              class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5 shadow-sm"
+              title="Print or Save as PDF"
+            >
+              <Printer class="w-3.5 h-3.5" />
+              <span class="hidden sm:inline">Print / Save PDF</span>
+            </button>
+            <button
+              type="button"
+              @click="guideModalOpen = false"
+              class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition"
+              title="Close Guide"
+            >
+              <X class="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Modal Scrollable Content -->
+        <div class="p-5 sm:p-6 overflow-y-auto space-y-6 text-slate-700 text-xs sm:text-sm">
+          <!-- Overview Intro Card -->
+          <div class="p-4 rounded-xl bg-blue-50/60 border border-blue-100 flex items-start gap-3">
+            <Info class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div class="space-y-1">
+              <div class="font-bold text-blue-950 text-xs sm:text-sm">Purpose of This Report</div>
+              <p class="text-xs text-blue-900/80 leading-relaxed">
+                This dashboard tracks season contract fulfillment, distinguishes between natural bye-weeks and true match deficits, and provides transparent accounting for substitute exchanges and bilateral Karma favors.
+              </p>
+            </div>
+          </div>
+
+          <!-- Section 1: Executive KPIs at a Glance -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1 flex items-center gap-1.5">
+              <span>1. Reading the Executive KPI Summary Cards</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                <div class="font-bold text-slate-900 text-xs flex items-center gap-1">
+                  <CheckCircle2 class="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Quota Delivery Health (%)</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Percentage of contracted members currently projected to receive 100% of their purchased matches. <strong>Target benchmark is 100%</strong>.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                <div class="font-bold text-slate-900 text-xs flex items-center gap-1">
+                  <AlertTriangle class="w-3.5 h-3.5 text-rose-600" />
+                  <span>Quota Deficit Alert</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Real-time count of players projected to finish <em>below</em> their contracted share (e.g. from an unfulfilled sub-out). <strong>Target is 0</strong>.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                <div class="font-bold text-slate-900 text-xs flex items-center gap-1">
+                  <RefreshCw class="w-3.5 h-3.5 text-amber-500" />
+                  <span>Total Substitutions</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Total matches successfully traded or listed via the Sub Board across the season. Measures overall community sub activity.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                <div class="font-bold text-slate-900 text-xs flex items-center gap-1">
+                  <Star class="w-3.5 h-3.5 text-amber-500" />
+                  <span>Pending Karma Favors</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Active sub requests where the applicant is returning or owed a favor. Give these candidates top priority for sub approvals.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Decoding Quota Status Badges -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+              2. Decoding the Season Quota Status Badges
+            </h4>
+            <div class="space-y-2">
+              <div class="flex items-start gap-2.5 p-2 rounded-lg bg-emerald-50/50 border border-emerald-100">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                  🟢 On Track
+                </span>
+                <span class="text-xs text-slate-700">
+                  <strong>100% Contracted Quota Scheduled:</strong> The player's confirmed schedule across the 24-week season matches their exact share commitment (e.g., 24 of 24 matches).
+                </span>
+              </div>
+
+              <div class="flex items-start gap-2.5 p-2 rounded-lg bg-rose-50/50 border border-rose-100">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 whitespace-nowrap">
+                  🔴 -N Deficit
+                </span>
+                <span class="text-xs text-slate-700">
+                  <strong>True Match Deficit:</strong> The player currently has fewer confirmed matches than contracted (e.g., they subbed out of a slot that is still unclaimed, or gave away more matches than they picked up).
+                </span>
+              </div>
+
+              <div class="flex items-start gap-2.5 p-2 rounded-lg bg-purple-50/50 border border-purple-100">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200 whitespace-nowrap">
+                  🟣 +N Surplus
+                </span>
+                <span class="text-xs text-slate-700">
+                  <strong>Bonus / Extra Matches:</strong> The player has picked up additional open sub slots beyond their contracted quota.
+                </span>
+              </div>
+
+              <div class="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 whitespace-nowrap">
+                  ⚪ Sub Pool
+                </span>
+                <span class="text-xs text-slate-700">
+                  <strong>Waitlist / Guest Subs:</strong> Members with 0 contracted shares (<code>0S / 0D</code>) who have subbed into matches or have a sub claim in flight. Inactive 0-share members are excluded from the report.
+                </span>
+              </div>
+            </div>
+
+            <!-- Note on Pacing Subtitle -->
+            <div class="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1">
+              <span class="font-bold text-slate-900">💡 Understanding the Progress Subtitle (e.g., "3 played • 21 upcoming"):</span>
+              <p class="text-slate-600 leading-relaxed text-[11px]">
+                Players who have blackouts or rest weeks early in the season are <strong>not penalized</strong>. As long as their 24-week schedule contains all of their matches, they remain <strong>On Track</strong>, and the subtitle shows their exact path to completion.
+              </p>
+            </div>
+          </div>
+
+          <!-- Section 3: Sub Turnover vs. Sub Karma (The Difference) -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+              3. Sub Turnover vs. Sub Karma (The Crucial Difference)
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div class="p-3 rounded-xl border border-slate-200 bg-white space-y-1">
+                <span class="font-bold text-slate-900 flex items-center gap-1.5">
+                  <ArrowRightLeft class="w-4 h-4 text-amber-600" />
+                  <span>Sub Turnover (Personal Inventory)</span>
+                </span>
+                <p class="text-[11px] text-slate-600 leading-relaxed">
+                  Answers: <em>"How many matches are currently on this player's calendar?"</em><br>
+                  When a player subs out, they donate or relinquish a court spot. Their confirmed match count decreases by 1.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-xl border border-slate-200 bg-white space-y-1">
+                <span class="font-bold text-slate-900 flex items-center gap-1.5">
+                  <Star class="w-4 h-4 text-amber-500" />
+                  <span>Sub Karma (Bilateral Social Favors)</span>
+                </span>
+                <p class="text-[11px] text-slate-600 leading-relaxed">
+                  Answers: <em>"Did someone do a favor for me that I need to repay?"</em><br>
+                  Subbing out does <strong>not</strong> make someone indebted to you. If two players trade 1-for-1, their bilateral karma is <strong>Even (0)</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div class="p-3 rounded-lg bg-amber-50/70 border border-amber-200 text-xs space-y-1">
+              <span class="font-bold text-amber-950">Why can a player show a -1 Deficit but owe no one a match?</span>
+              <p class="text-amber-900/90 text-[11px] leading-relaxed">
+                If Player A gave away a match on the Sub Board, they don't owe anyone. If that match was claimed by a 0-share waitlist sub (who has no contract shares to trade back) or is <strong>still waiting unclaimed on the Sub Board</strong>, no other player owes Player A either. Player A simply has 1 less match on their schedule.
+              </p>
+            </div>
+          </div>
+
+          <!-- Section 4: Using the Expanded Player Drawer -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+              4. Inspecting the Expanded Player Drawer
+            </h4>
+            <p class="text-xs text-slate-600">
+              Click anywhere on a player’s row to open their 3-column deep-dive inspection drawer:
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/40 space-y-1">
+                <span class="font-bold text-slate-900 flex items-center gap-1">
+                  <Calendar class="w-3.5 h-3.5 text-blue-600" />
+                  <span>Active Scheduled Matches</span>
+                </span>
+                <p class="text-[11px] text-slate-500 leading-relaxed">
+                  Chronological calendar of all confirmed matches (completed vs. upcoming), including week numbers, courts, and match type.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/40 space-y-1">
+                <span class="font-bold text-slate-900 flex items-center gap-1">
+                  <ArrowRightLeft class="w-3.5 h-3.5 text-amber-600" />
+                  <span>Sub Exchange Log</span>
+                </span>
+                <p class="text-[11px] text-slate-500 leading-relaxed">
+                  Itemizes every sub-out (showing who claimed it or if it is currently <code>⏳ Unclaimed</code> on the Sub Board) and every sub-in.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/40 space-y-1">
+                <span class="font-bold text-slate-900 flex items-center gap-1">
+                  <Users class="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Karma & Constraints</span>
+                </span>
+                <p class="text-[11px] text-slate-500 leading-relaxed">
+                  Head-to-head favor breakdown with specific trading partners, unique opponents faced, and registered blackout weeks/days.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 5: Admin Action Playbook -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+              5. Administrator Action Playbook
+            </h4>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="w-full text-left text-xs divide-y divide-slate-200">
+                <thead class="bg-slate-50 font-bold text-slate-700">
+                  <tr>
+                    <th class="p-2.5">Scenario</th>
+                    <th class="p-2.5">Recommended Administrator Action</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-semibold text-slate-900">Player has a -1 Deficit</td>
+                    <td class="p-2.5 text-slate-600">
+                      Click the <strong>In Deficit</strong> filter. Expand their row and check the <strong>Sub Exchange Log</strong>. If their sub-out is <code>⏳ Unclaimed</code>, assign an eligible candidate. If it was already played, offer them an open sub slot to make up their missed match.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-semibold text-slate-900">Multiple Candidates Request a Slot</td>
+                    <td class="p-2.5 text-slate-600">
+                      Check for applicants flagged with <code>⭐ Owed Match</code>. Both manual approvals and the 24h Auto-Draft engine prioritize players owed a favor first.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-semibold text-slate-900">High Turnover (>25% Sub Out)</td>
+                    <td class="p-2.5 text-slate-600">
+                      Click the <strong>High Turnover</strong> filter. Identify players who frequently give away matches to discuss reducing their share size for the next contract season.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-semibold text-slate-900">Board / League Audit</td>
+                    <td class="p-2.5 text-slate-600">
+                      Click <strong>Export PDF</strong> to generate a formatted landscape executive report with KPI summaries, or <strong>Export CSV</strong> for custom spreadsheets.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 flex-shrink-0 no-print">
+          <span class="hidden sm:inline">Winter Tennis Contract League • Administrator SOP & User Guide</span>
+          <button
+            type="button"
+            @click="guideModalOpen = false"
+            class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl transition text-xs ml-auto shadow-sm"
+          >
+            Close Guide
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-guide-container,
+  .print-guide-container * {
+    visibility: visible;
+  }
+  .print-guide-container {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    overflow: visible !important;
+    background: white !important;
+    z-index: 99999 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+</style>

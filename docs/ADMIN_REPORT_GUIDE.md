@@ -29,7 +29,22 @@ The **Season Quota Pace** column evaluates a player's **total season inventory**
 
 ---
 
-### 3. Sub Turnover vs. Sub Karma (The Crucial Difference)
+### 3. Column-by-Column Breakdown of the Admin Player Grid
+
+| Column | What It Displays | How It Is Calculated & What to Look For |
+| :--- | :--- | :--- |
+| **Contract** | `[singles]S / [doubles]D`<br>`[target] matches` | **Purchased Season Allocation**. Based on the player's contracted shares over 24 weeks (`singles_share * 24` + `doubles_share * 24`). Example: `0.38S / 0.13D` = 12 total matches (9 singles, 3 doubles). |
+| **Singles (Act/Tgt)** | `[scheduled] / [target]`<br>+ blue progress bar | **Confirmed Singles vs. Contract**. Counts confirmed singles slots currently on their calendar compared to target singles matches. |
+| **Doubles (Act/Tgt)** | `[scheduled] / [target]`<br>+ green progress bar | **Confirmed Doubles vs. Contract**. Counts confirmed doubles slots currently on their calendar compared to target doubles matches. |
+| **Season Quota Pace** | Status Badge<br>`X played • Y upcoming` | **Inventory Fulfillment Status**. Evaluates full 24-week confirmed inventory against contract (`🟢 On Track`, `🔴 -N Deficit`, `🟣 +N Surplus`, `⚪ Sub Pool`). The subtitle shows how many games are in the book vs. scheduled in future weeks. |
+| **Proj. Total** | `[scheduled] ([variance])`<br>(e.g. `11 (-1)` or `24 (0)`) | **Season-Long Match Total**. Total confirmed matches across both formats. The bracketed number shows net deviation from contract (`-1` = 1 match short, `0` = exactly on contract, `+1` = 1 bonus match). |
+| **Subs (Out/In)** | `X out, Y in`<br>`Net: ±Z` | **Sub Board Turnover & Match Flow**.<br>• **Out**: Matches the player gave away or listed on the Sub Board.<br>• **In**: Matches where the player stepped in to sub for someone else.<br>• **Net**: Direct net change to their personal calendar (`In - Out`). |
+| **Karma Ledger** | `Even (0)` / `+N Favors Owed`<br>`-N Favors Due`<br>+ `⭐ N Owed Pending` | **Social Favor Balance**.<br>• **+N Favors Owed**: The player has subbed for peers more times than peers have subbed for them.<br>• **-N Favors Due**: The player owes peers return favors.<br>• **⭐ Badge**: Active sub request where the applicant is returning/owed a favor. |
+| **Idle Streak** | `N wks`<br>(e.g. `2 wks`) | **Maximum Scheduling Gap**. The longest consecutive stretch of season weeks with **0 scheduled matches**. Highlighted in amber if $\ge 3$ consecutive weeks to alert admins to long player droughts. |
+
+---
+
+### 4. Sub Turnover vs. Sub Karma (The Crucial Difference)
 
 * **Inventory Deficit vs. Social Karma**:
   * **Quota Deficit** answers: *"Did the player lose a match on their personal calendar?"*
@@ -42,7 +57,7 @@ The **Season Quota Pace** column evaluates a player's **total season inventory**
 
 ---
 
-### 4. Using the Expanded Player Drawer
+### 5. Using the Expanded Player Drawer
 
 Click any player row to inspect their 3-column deep-dive inspection drawer:
 
@@ -55,7 +70,7 @@ Click any player row to inspect their 3-column deep-dive inspection drawer:
 
 ---
 
-### 5. Administrator Action Playbook
+### 6. Administrator Action Playbook
 
 | Scenario | Recommended Action |
 | :--- | :--- |

@@ -1566,10 +1566,86 @@ const handleExportPDF = async () => {
             </div>
           </div>
 
-          <!-- Section 3: Sub Turnover vs. Sub Karma (The Difference) -->
+          <!-- Section 3: Column-by-Column Breakdown of the Admin Player Grid -->
           <div class="space-y-2.5">
             <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
-              3. Sub Turnover vs. Sub Karma (The Crucial Difference)
+              3. Column-by-Column Breakdown of the Admin Grid
+            </h4>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="w-full text-left text-xs divide-y divide-slate-200">
+                <thead class="bg-slate-50 font-bold text-slate-700">
+                  <tr>
+                    <th class="p-2.5 w-36">Column</th>
+                    <th class="p-2.5 w-44">Format & Example</th>
+                    <th class="p-2.5">Calculation & Interpretation</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-[11px]">
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Contract</td>
+                    <td class="p-2.5 font-mono text-slate-600">0.38S / 0.13D<br><span class="text-slate-400 font-sans">12 matches</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Purchased Target Quota.</strong> Calculated from season contract shares over 24 weeks (<code class="bg-slate-100 px-1 rounded">singles_share * 24 + doubles_share * 24</code>).
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Singles (Act/Tgt)</td>
+                    <td class="p-2.5 font-mono text-slate-600">8 / 9 <span class="text-blue-600 font-sans">(progress bar)</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Confirmed Singles vs. Contract.</strong> Actual confirmed singles court slots currently booked across the season vs. paid singles allocation.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Doubles (Act/Tgt)</td>
+                    <td class="p-2.5 font-mono text-slate-600">3 / 3 <span class="text-emerald-600 font-sans">(progress bar)</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Confirmed Doubles vs. Contract.</strong> Actual confirmed doubles court slots currently booked across the season vs. paid doubles allocation.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Season Quota Pace</td>
+                    <td class="p-2.5 text-slate-600"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">🟢 On Track</span><br><span class="text-slate-400">3 played • 21 upcoming</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Overall Delivery Health.</strong> Evaluates whether the full 24-week schedule fulfills 100% of their share commitment. Early season rest weeks or blackouts do not trigger false deficit alarms.
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Proj. Total</td>
+                    <td class="p-2.5 font-mono text-slate-600">11 <span class="text-rose-600 font-bold">(-1)</span> / 24 <span class="text-slate-400">(0)</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Season-Long Match Total.</strong> Total confirmed matches across both singles and doubles. The bracketed number displays net variance from contract (<code class="text-rose-600">-1</code> = short 1 match, <code class="text-emerald-600">+1</code> = surplus).
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Subs (Out/In)</td>
+                    <td class="p-2.5 text-slate-600"><span class="text-amber-700 bg-amber-50 px-1 rounded">2 out</span> <span class="text-emerald-700 bg-emerald-50 px-1 rounded">1 in</span><br><span class="text-slate-400">Net: -1</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Sub Board Turnover.</strong> <strong>Out</strong> = baseline matches relinquished. <strong>In</strong> = matches played as a sub for others. <strong>Net</strong> = direct net change to their personal calendar count (<code class="bg-slate-100 px-1 rounded">In - Out</code>).
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Karma Ledger</td>
+                    <td class="p-2.5 text-slate-600"><span class="font-bold text-amber-900 bg-amber-100 px-1 rounded">+1 Favors Owed</span><br><span class="text-slate-400">or Even (0)</span></td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Social Favor Balance.</strong> Head-to-head favor balance across the league. Measures if they have subbed for peers more than peers subbed for them. Distinct from Quota Deficit!
+                    </td>
+                  </tr>
+                  <tr class="hover:bg-slate-50/50">
+                    <td class="p-2.5 font-bold text-slate-900">Idle Streak</td>
+                    <td class="p-2.5 font-mono text-slate-600">2 wks</td>
+                    <td class="p-2.5 text-slate-600">
+                      <strong>Maximum Scheduling Gap.</strong> The longest consecutive stretch of season weeks with 0 scheduled matches. Highlighted in amber if &ge; 3 consecutive weeks to spot scheduling droughts.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section 4: Sub Turnover vs. Sub Karma (The Difference) -->
+          <div class="space-y-2.5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+              4. Sub Turnover vs. Sub Karma (The Crucial Difference)
             </h4>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div class="p-3 rounded-xl border border-slate-200 bg-white space-y-1">
@@ -1603,10 +1679,10 @@ const handleExportPDF = async () => {
             </div>
           </div>
 
-          <!-- Section 4: Using the Expanded Player Drawer -->
+          <!-- Section 5: Using the Expanded Player Drawer -->
           <div class="space-y-2.5">
             <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
-              4. Inspecting the Expanded Player Drawer
+              5. Inspecting the Expanded Player Drawer
             </h4>
             <p class="text-xs text-slate-600">
               Click anywhere on a player’s row to open their 3-column deep-dive inspection drawer:
@@ -1644,10 +1720,10 @@ const handleExportPDF = async () => {
             </div>
           </div>
 
-          <!-- Section 5: Admin Action Playbook -->
+          <!-- Section 6: Admin Action Playbook -->
           <div class="space-y-2.5">
             <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
-              5. Administrator Action Playbook
+              6. Administrator Action Playbook
             </h4>
             <div class="overflow-x-auto rounded-lg border border-slate-200">
               <table class="w-full text-left text-xs divide-y divide-slate-200">
